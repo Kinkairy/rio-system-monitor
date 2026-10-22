@@ -1,0 +1,17 @@
+# Public distribution repository. Only these paths are normally staged.
+*
+!*/
+!/.gitignore
+!/README.md
+!/LICENSE
+!/PRIVACY.md
+!/THIRD-PARTY-NOTICES.md
+!/docs/*.md
+!/docs/third-party/**/*.txt
+!/docs/third-party/**/LICENSE
+!/docs/third-party/**/LICENSE.md
+!/docs/third-party/**/COPYING
+!/docs/third-party/ffmpeg/COPYING.GPLv3
+!/docs/third-party/qt/SOURCES.json
+!/src/rio_monitor/__init__.py
+!/src/rio_monitor/model.py
