@@ -9,3 +9,22 @@ bundle-pruning.json
 *.p12
 *.key
 .env
+
+# Art, fonts, animation data and builds belong in the private asset repository.
+assets/*
+!assets/ui/
+assets/ui/*
+!assets/ui/*.qml
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.ico
+*.otf
+*.ttf
+*.exe
+*.dll
+*.zip
+*.bundle
+*.mp4

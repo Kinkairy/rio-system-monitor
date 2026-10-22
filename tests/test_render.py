@@ -3,6 +3,7 @@ from pathlib import Path
 from rio_monitor.render import Renderer
 from rio_monitor.model import Sample
 class RenderTests(unittest.TestCase):
+ @unittest.skipUnless((Path(__file__).resolve().parents[1]/'assets/background.png').is_file(),'Private artwork is required for renderer tests')
  def test_missing_and_overflow(self):
   renderer=Renderer(Path(__file__).resolve().parents[1]/'assets')
   for value in (None,0,100,999999):

@@ -15,11 +15,34 @@ before use. USB hardware output has not yet been validated by the maintainer.
 
 ## Build and test
 
-Use Python 3.12 on Windows. Run Build-Windows.cmd to produce the single-file
-windowed executable in dist/. Dependencies are downloaded from PyPI.
-Tests: set PYTHONPATH=src, then python -m unittest discover -s tests -v.
+This public repository contains source code and documentation only. Images,
+animation atlases, animation registration data, fonts and icons are kept in the
+private `Kinkairy/usb-round-screen` repository under `monitor-assets/`.
+Those materials are not licensed or distributed by this public repository.
+
+For an authorized local build, clone the private repository separately and run:
+
+```text
+python tools/import_private_assets.py --source <absolute-path-to-private-monitor-assets>
+```
+
+The importer verifies the private manifest before copying material into the
+ignored local `assets/` directory. Qt Quick `.qml` files remain public source.
+Use Python 3.12 on Windows, then run `Build-Windows.cmd` to create a local EXE.
+Missing private material produces a clear build error. Dependencies come from PyPI.
+
+Tests: set `PYTHONPATH=src`, then `python -m unittest discover -s tests -v`.
+Without private material, tests requiring art/fonts are explicitly skipped;
+after import, run the same command for the complete suite.
 Entry point: launch.py -> rio_monitor.qt_app. Older Tk modules are legacy only.
-The workflow captures actual packaged Qt windows and checks tray/window lifecycle.
+Public CI checks the source boundary and source tests. It does not fetch private
+material or upload executable files, screenshots, previews or other build artifacts.
+Do not attach builds containing private assets to public releases or CI artifacts.
+
+The maintainer-approved material migration rewrote the original three-commit
+public history. The original history is preserved only on the private repository's
+`archive/rio-system-monitor-assets-a219b700` branch. Existing clones must not push
+the old history back into this public repository; obtain a fresh clone instead.
 
 ## Settings and exit
 

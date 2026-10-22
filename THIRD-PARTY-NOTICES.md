@@ -15,5 +15,8 @@
   Qt/PySide LGPL obligations. This source-preparation snapshot is not a completed
   binary license/compliance audit or a signed release.
 
-Original RIO artwork is provided with the owner's authorization for this project.
-The code's MIT license does not relicense third-party materials.
+RIO artwork, fonts, icons and animation materials are held in a private repository
+and are not distributed here. Font paths above refer to an authorized local asset
+import. A private binary build must retain the original notices with the material.
+The public source's MIT license does not grant any rights to private artwork or
+relicense third-party materials.
