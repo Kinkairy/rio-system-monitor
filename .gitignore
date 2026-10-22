@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+qt-capture/
+bundle-pruning.json
+*.pfx
+*.p12
+*.key
+.env
