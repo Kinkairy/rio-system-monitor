@@ -1,5 +1,5 @@
-import io,queue,threading
-from .protocol import FrameSender
+import queue,threading
+from .protocol import FrameSender,encode_rgb565
 from .winusb import WinUSB
 class ScreenOutput:
     """Latest-frame queue; never pile up or retry an uncertain USB operation."""
@@ -15,12 +15,12 @@ class ScreenOutput:
     def run(self):
         transport=None
         try:
-            transport=WinUSB(self.path);sender=FrameSender(transport)
+            transport=WinUSB(self.path);sender=FrameSender(transport);sender.lcd_info()
             while not self.stop.is_set():
                 try:image=self.frames.get(timeout=.2)
                 except queue.Empty:continue
-                stream=io.BytesIO();image.convert('RGB').save(stream,format='JPEG',quality=75)
-                sender.send(stream.getvalue());self.sent+=1
+                if image.size!=(480,480):raise ValueError('Expected a 480x480 frame')
+                sender.send(encode_rgb565(image));self.sent+=1
         except Exception as exc:self.error=str(exc);self.stop.set()
         finally:
             if transport:transport.close()

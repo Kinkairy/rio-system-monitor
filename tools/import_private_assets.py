@@ -6,6 +6,8 @@ from verify_private_assets import ROOT, verify
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source',type=Path,required=True)
+    parser.add_argument('--startup-loop',type=Path,required=True,help='Private fa2f691 color-accent GIF')
+    parser.add_argument('--ffmpeg',type=Path,required=True,help='Local FFmpeg 6.1.1 Windows x64 converter; never uploaded')
     args=parser.parse_args();source=args.source.resolve();target=(ROOT/'assets').resolve()
     manifest=source/'manifest.json';data=json.loads(manifest.read_text(encoding='utf-8-sig'))
     checked=[]
@@ -18,6 +20,19 @@ def main():
         raw=src.read_bytes()
         if len(raw)!=row['bytes'] or hashlib.sha256(raw).hexdigest()!=row['sha256']:raise ValueError('Asset checksum mismatch: '+str(name))
         checked.append((src,dest))
+    extras=[]
+    for src,name,expected in (
+        (args.startup_loop,'default-screen.gif','7d1d5659c04ce92810bf7be6717844946815666220b13c5c785cfe63b80daa6c'),
+        (args.ffmpeg,'media/ffmpeg.exe','04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00')):
+        raw=src.read_bytes();digest=hashlib.sha256(raw).hexdigest()
+        if digest!=expected:raise ValueError('Bundled file checksum mismatch: '+name)
+        checked.append((src,target/name));extras.append({'path':name,'bytes':len(raw),'sha256':digest})
+    for src in sorted((ROOT/'docs/third-party/ffmpeg').iterdir()):
+        if src.is_file() and (src.suffix=='.txt' or src.name=='COPYING.GPLv3'):
+            raw=src.read_bytes();name='media/'+src.name
+            checked.append((src,target/name));extras.append({'path':name,'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest()})
+    data['files'].extend(extras)
+    data['startup_source']={'repository':'Kinkairy/usb-round-screen','commit':'fa2f6913e507a728961b18bed42addf9919294f8','path':'artwork/startup-loop/RIO-System-Monitor-color-accent-loop.gif'}
     for src,dest in checked:
         dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(src,dest)
     (target/'private-manifest.json').write_text(json.dumps(data,indent=2),encoding='utf-8')

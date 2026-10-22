@@ -3,7 +3,7 @@ from pathlib import Path
 from PIL import Image
 from rio_monitor.robot import RobotAnimator,bubble,expression
 ASSETS=Path(__file__).resolve().parents[1]/'assets'
-@unittest.skipUnless((ASSETS/'robot-turn-atlas.png').is_file(),'Private animation assets are required')
+@unittest.skipUnless((ASSETS/'robot-turn-atlas.png').is_file(),'Private artwork unavailable')
 class RobotTests(unittest.TestCase):
  def test_original_assets_unchanged(self):
   meta=json.loads((ASSETS/'robot-turn.json').read_text())

@@ -13,10 +13,12 @@ class Tests(unittest.TestCase):
   self.assertAlmostEqual(s.value,100,places=2)
   self.assertTrue(math.isfinite(s.update(0,99)))
  def test_command(self):
-  p=frame_command(b'\xff\xd8\xff\xd9',42)
+  p=frame_command(bytes(480*480*2),42)
   self.assertEqual(len(p),31)
   self.assertEqual(p[:4],b'USBC')
   self.assertEqual(p[15],0xcd)
+  self.assertEqual(p[20:22],b'\x06\x12')
+  self.assertEqual(p[22:26],bytes(4))
   self.assertEqual(p[26:30],struct.pack('<HH',479,479))
  def test_status(self):
   validate_status(struct.pack('<4sIIB',b'USBS',1,0,0),1)
@@ -26,6 +28,6 @@ class Tests(unittest.TestCase):
   class T:
    def write(self,ep,data):return 0
   f=FrameSender(T())
-  with self.assertRaises(ProtocolError):f.send(b'\xff\xd8\xff\xd9')
+  with self.assertRaises(ProtocolError):f.send(bytes(480*480*2))
   self.assertTrue(f.faulted)
 if __name__=='__main__':unittest.main()

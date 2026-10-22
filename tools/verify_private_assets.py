@@ -7,12 +7,12 @@ REQUIRED = ('background.png','clock.otf','fonts/Born2bSporty.otf',
             'fonts/PixelOperatorHB.ttf','gauge-mask.png','layout.json',
             'ram-separator.png','rio-brand.png','rio-icon.ico','rio-icon.png',
             'robot-front.png','robot-left.png','robot-right.png',
-            'robot-turn-atlas.png','robot-turn.json')
+            'robot-turn-atlas.png','robot-turn.json','default-screen.gif','media/ffmpeg.exe')
 
 def verify(root=ROOT/'assets'):
     manifest = root/'private-manifest.json'
     if not manifest.is_file():
-        raise ValueError('Private assets missing. Run tools/import_private_assets.py --source <private monitor-assets directory>.')
+        raise ValueError('Private assets missing. See README for tools/import_private_assets.py and its startup-loop/ffmpeg inputs.')
     data = json.loads(manifest.read_text(encoding='utf-8-sig'))
     rows = {r['path']:r for r in data['files']}
     for name in REQUIRED:

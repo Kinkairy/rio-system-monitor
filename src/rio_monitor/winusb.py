@@ -12,6 +12,16 @@ class InterfaceData(ctypes.Structure):
 class PipeInfo(ctypes.Structure):
     _fields_=[('PipeType',ctypes.c_int),('PipeId',ctypes.c_ubyte),('MaximumPacketSize',w.USHORT),('Interval',ctypes.c_ubyte)]
 
+def interface_guids(key):
+    """Windows drivers use either the singular REG_SZ or plural REG_MULTI_SZ."""
+    import winreg
+    guids=set()
+    for name in ('DeviceInterfaceGUIDs','DeviceInterfaceGUID'):
+        try:value,_=winreg.QueryValueEx(key,name)
+        except FileNotFoundError:continue
+        guids.update(value if isinstance(value,list) else [value])
+    return guids
+
 def enumerate_paths():
     if os.name!='nt':return []
     import winreg
@@ -30,8 +40,7 @@ def enumerate_paths():
                     except OSError:break
                     try:
                         with winreg.OpenKey(device,instance+r'\Device Parameters') as key:
-                            value,_=winreg.QueryValueEx(key,'DeviceInterfaceGUIDs')
-                            guids.update(value if isinstance(value,list) else [value])
+                            guids.update(interface_guids(key))
                     except FileNotFoundError:pass
     setup=ctypes.WinDLL('setupapi',use_last_error=True)
     setup.SetupDiGetClassDevsW.argtypes=[ctypes.POINTER(GUID),w.LPCWSTR,w.HWND,w.DWORD];setup.SetupDiGetClassDevsW.restype=w.HANDLE
@@ -84,10 +93,20 @@ class WinUSB:
                 if not self.u.WinUsb_QueryPipe(self.handle,0,index,ctypes.byref(info)):break
                 if info.PipeType==2:found.add(info.PipeId)
             if not {1,0x81}.issubset(found):raise OSError('Expected bulk endpoints are missing')
-            timeout=w.ULONG(1500)
-            for ep in (1,0x81):
-                if not self.u.WinUsb_SetPipePolicy(self.handle,ep,3,4,ctypes.byref(timeout)):raise ctypes.WinError(ctypes.get_last_error())
+            self.set_timeout(1500)
         except Exception:self.close();raise
+    def set_timeout(self,milliseconds):
+        if not 100<=milliseconds<=5000:raise ValueError('Invalid USB timeout')
+        timeout=w.ULONG(milliseconds)
+        for ep in (1,0x81):
+            if not self.u.WinUsb_SetPipePolicy(self.handle,ep,3,4,ctypes.byref(timeout)):raise ctypes.WinError(ctypes.get_last_error())
+    def device_descriptor(self):
+        function=self.u.WinUsb_GetDescriptor
+        function.argtypes=[ctypes.c_void_p,ctypes.c_ubyte,ctypes.c_ubyte,w.USHORT,ctypes.c_void_p,w.ULONG,ctypes.POINTER(w.ULONG)]
+        function.restype=w.BOOL
+        buf=ctypes.create_string_buffer(18);actual=w.ULONG()
+        if not function(self.handle,1,0,0,buf,18,ctypes.byref(actual)):raise ctypes.WinError(ctypes.get_last_error())
+        return buf.raw[:actual.value]
     def write(self,ep,payload):
         buf=ctypes.create_string_buffer(payload);actual=w.ULONG()
         if not self.u.WinUsb_WritePipe(self.handle,ep,buf,len(payload),ctypes.byref(actual),None):raise ctypes.WinError(ctypes.get_last_error())

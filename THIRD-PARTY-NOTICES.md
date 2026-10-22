@@ -1,5 +1,14 @@
 # Third-party notices
 
+- Optional temperature support uses the unmodified LibreHardwareMonitor 0.9.6
+  release (MPL-2.0) and signed PawnIO 2.2.0 installer, fetched and verified by
+  `sensors/Build-Sensors.ps1`. No driver binary is tracked in this repository.
+  See `docs/temperature-component.md` for sources and explicit installation behavior.
+- Local video conversion uses a separately supplied FFmpeg 6.1.1 executable.
+  Full GPLv3 terms and build notices are in `docs/third-party/ffmpeg/`.
+  The importer copies these notices into a private binary build; no FFmpeg binary
+  or private artwork is distributed by this public repository.
+
 - Born2bSporty FS: Copyright Haley Wakamatsu (UkiyoMoji Fonts) 2022-2026.
   Author page explicitly grants SIL OFL 1.1:
   https://2gd4.me/tidbit/shavian-fonts.html . The author's linked download is

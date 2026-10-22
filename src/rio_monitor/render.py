@@ -1,5 +1,5 @@
 from pathlib import Path
-from PIL import Image,ImageDraw,ImageFont
+from PIL import Image,ImageDraw,ImageFont,ImageChops
 import math,time,datetime,sys
 from .model import Spring
 
@@ -9,6 +9,23 @@ from .usage_chart import UsageChart,CPU,GPU
 from .weather import WeatherPanel
 from .robot import RobotAnimator
 
+def complete_gauge_mask(mask):
+    # The approved 1254px mask has two damaged cells on the right arc.
+    # Restore only missing cells from the matching intact left-side shapes.
+    repaired=mask.copy()
+    if mask.size!=(1254,1254):return repaired
+    for seed in ((184,287),(161,323)):
+        pending=[seed];seen=set();cell=[]
+        while pending:
+            x,y=pending.pop()
+            if (x,y) in seen or not (100<=x<240 and 240<=y<365):continue
+            seen.add((x,y));alpha=mask.getpixel((x,y))
+            if not alpha:continue
+            cell.append((1253-x,y,alpha));pending.extend(((x-1,y),(x+1,y),(x,y-1),(x,y+1)))
+        if cell and sum(mask.getpixel((x,y)) for x,y,_ in cell)<sum(a for _,_,a in cell)*.5:
+            for x,y,alpha in cell:repaired.putpixel((x,y),max(alpha,repaired.getpixel((x,y))))
+    return repaired
+
 class Renderer:
     def __init__(self,assets=None,font_choice="born"):
         self.assets=Path(assets or (Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets'))
@@ -16,7 +33,11 @@ class Renderer:
         self.clockfont=ImageFont.truetype(str(self.assets/'clock.otf'),33)
         self.ram_separator=Image.open(self.assets/'ram-separator.png').convert('RGBA')
         self.robot = RobotAnimator(self.assets)
-        self.gauge_mask=Image.open(self.assets/'gauge-mask.png').convert('L')
+        self.gauge_mask=complete_gauge_mask(Image.open(self.assets/'gauge-mask.png').convert('L'))
+        self.temperature_fill=Image.new('RGB',(868,128),(0,230,130))
+        self.temperature_fill_alpha=Image.new('L',self.temperature_fill.size)
+        fill_draw=ImageDraw.Draw(self.temperature_fill_alpha)
+        for y in range(128):fill_draw.line((0,y,867,y),fill=round(180*(127-y)/127))
         self.gauge_colors=Image.new('RGB',self.background.size)
         gd=ImageDraw.Draw(self.gauge_colors)
         # Fixed green/yellow/orange/red temperature scale, same segmented mask.
@@ -32,6 +53,7 @@ class Renderer:
         self.charts={k:UsageChart() for k in ("cpu","gpu")}
         self.sheen=TemperatureSheen()
         self.weather=WeatherPanel(self.assets)
+        self.gpu_charts={}
         self.last=None;self.history=[];self.last_sample=None
     def clock(self,im,wall):
         s=f'{wall:%H:%M} · {wall:%m/%d} · '+ ('MON','TUE','WED','THU','FRI','SAT','SUN')[wall.weekday()]
@@ -81,9 +103,17 @@ class Renderer:
                 d.rectangle((left,y,right,y+bh),fill=(24,67,52))
                 edge=min(right,round(x+bw*fraction)-1)
                 if edge>=left:d.rectangle((left,y,edge,y+bh),fill=color)
+        for reading in getattr(samples,'gpus',()):
+            from .model import Sample
+            chart=self.gpu_charts.setdefault(reading.identifier,UsageChart())
+            chart.update(Sample(reading.usage,reading.timestamp,reading.identifier),now,dt)
         for key,left,palette in [("cpu",33,CPU),("gpu",247,GPU)]:
-            fresh=self.charts[key].update(samples.get(key),now,dt)
-            self.charts[key].draw(im,left,palette,fresh)
+            selected=getattr(samples,'selected_gpu',None)
+            if key=='gpu' and selected and selected.identifier in self.gpu_charts:
+                chart=self.gpu_charts[selected.identifier];sample=samples.get(key);fresh=sample is not None and sample.current(now) is not None
+            else:
+                chart=self.charts[key];fresh=chart.update(samples.get(key),now,dt)
+            chart.draw(im,left,palette,fresh)
         gauge=self.gauge_colors.point(lambda p:round(p*.23))
         if temp is not None:
             progress=max(0,min(100,self.springs['temperature'].value))
@@ -94,20 +124,29 @@ class Renderer:
         if sample and sample.timestamp!=self.last_sample:
             self.history.append(temp);self.history=self.history[-120:];self.last_sample=sample.timestamp
         # The curve is actual temperature history, gaps stay gaps.
+        segments=[];pts=[]
+        for i,v in enumerate(self.history):
+            if v is None:
+                if pts:segments.append(pts)
+                pts=[];continue
+            pts.append((1062-(len(self.history)-1-i)*867/119,670-max(0,min(100,v))*1.2))
+        if pts:segments.append(pts)
+        if any(len(part)>1 for part in segments):
+            area=Image.new('L',self.temperature_fill.size);area_draw=ImageDraw.Draw(area)
+            for part in segments:
+                if len(part)>1:
+                    polygon=[(x-195,y-543) for x,y in part]+[(part[-1][0]-195,127),(part[0][0]-195,127)]
+                    area_draw.polygon(polygon,fill=255)
+            im.paste(self.temperature_fill,(195,543),ImageChops.multiply(area,self.temperature_fill_alpha))
         for x in range(195,1063,34):d.line((x,543,x,675),fill=(9,59,40))
         for y in range(543,676,33):d.line((195,y,1062,y),fill=(9,59,40))
         for x in range(265,1062,84):
             for y in range(549,675,15):d.line((x,y,x,y+5),fill=(160,171,32),width=2)
-        pts=[]
-        for i,v in enumerate(self.history):
-            if v is None:
-                if len(pts)>1:d.line(pts,fill='#31ffaf',width=4)
-                pts=[];continue
-            pts.append((1062-(len(self.history)-1-i)*867/119,670-max(0,min(100,v))*1.2))
-        if len(pts)>1:d.line(pts,fill='#31ffaf',width=4)
+        for part in segments:
+            if len(part)>1:d.line(part,fill='#31ffaf',width=4)
         if pts:
             x,y=pts[-1];d.ellipse((x-6,y-6,x+6,y+6),fill='#ffe533')
-        # Original-art in-betweens, fixed base and anchor.
+        # Original-art in-betweens from a219b700; fixed base and anchor.
         plate=Image.new('RGBA',im.size);pd=ImageDraw.Draw(plate)
         pd.ellipse((904,385,1036,517),fill=(0,24,16,255))
         grid=Image.new('RGBA',(132,132));gg=ImageDraw.Draw(grid)

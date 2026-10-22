@@ -1,5 +1,5 @@
-"""Optional HTTPS weather worker. Only starts network requests after user opt-in.
-No stored IP, GPS, credentials, port listener, or silent city selection.
+"""HTTPS weather worker; network location is enabled by default in Settings.
+No stored IP, GPS, credentials or port listener.
 """
 import json,math,time,threading,urllib.request,urllib.parse,datetime
 from .weather import WeatherReading

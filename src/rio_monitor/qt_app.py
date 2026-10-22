@@ -1,26 +1,44 @@
 """Qt Quick single-window shell. Existing telemetry/render/output are kept separate."""
-import sys,time,json,threading,queue,argparse
+import sys,time,json,threading,queue,argparse,statistics
+from collections import deque
 from pathlib import Path
 from dataclasses import replace
-from PySide6.QtCore import QObject,Signal,Slot,Property,QTimer,QUrl,Qt
+from functools import lru_cache
+from PIL import Image,ImageDraw
+from PySide6.QtCore import QObject,Signal,Slot,Property,QTimer,QUrl,Qt,QMetaObject
 from PySide6.QtGui import QIcon,QImage,QAction,QFont
-from PySide6.QtWidgets import QApplication,QSystemTrayIcon,QMenu
+from PySide6.QtWidgets import QApplication,QSystemTrayIcon,QMenu,QFileDialog
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtQuick import QQuickImageProvider
 from .settings import Settings,load,save,set_autostart
 from .weather_source import WeatherWorker,cities,coordinates,fetch_json
 from .telemetry import Collector
-from .render import Renderer
+from .render_cache import Renderer
+from .temperature_component import TemperatureComponent
+from .storage import DisplaySession,StorageJob
+
+@lru_cache(maxsize=2)
+def preview_mask(size):
+ # Only the settings preview is transparent; USB output stays RGB565.
+ mask=Image.new('L',(size*4,size*4));ImageDraw.Draw(mask).ellipse((0,0,size*4-1,size*4-1),fill=255)
+ return mask.resize((size,size),Image.Resampling.LANCZOS)
+
+def preview_bytes(frame):
+ image=frame.convert('RGBA');image.putalpha(preview_mask(frame.width));return image.tobytes()
 
 class Frames(QQuickImageProvider):
- def __init__(self):super().__init__(QQuickImageProvider.Image);self.image=QImage(480,480,QImage.Format_RGB888);self.image.fill(Qt.black)
+ def __init__(self):super().__init__(QQuickImageProvider.Image);self.image=QImage(480,480,QImage.Format_RGBA8888);self.image.fill(Qt.transparent)
  def requestImage(self,id,size,requestedSize):return self.image
 
 class Bridge(QObject):
- changed=Signal();frameChanged=Signal();noticeChanged=Signal()
- def __init__(self,app,settings,weather,provider,capture=False):
+ changed=Signal();frameChanged=Signal();noticeChanged=Signal();defaultConfirmationChanged=Signal()
+ def __init__(self,app,settings,weather,provider,capture=False,monitor=None,storage=None):
   super().__init__();self.app=app;self.s=settings;self.weather=weather;self.frames=provider;self.capture=capture;self.win=None;self.tray=None;self._frame=0;self._notice='';self._saved=False;self._results=[];self._status='';self._busy=False;self._city='';self.loc=None;self.mode=settings.weather_mode;self.city=settings.city;self.mail=queue.Queue();self.generation=0;self.visible=True;self.quitting=False;self.shutdown=None
+  self._dirty=False;self.save_timer=QTimer(self);self.save_timer.setSingleShot(True);self.save_timer.setInterval(250);self.save_timer.timeout.connect(self.flushSettings)
+  self.monitor=monitor or TemperatureComponent(Path(),settings.temperature_monitor,start=False);self.monitor_snapshot=None
+  self.storage=storage or StorageJob(DisplaySession(settings.display_mode),Path());self.storage_snapshot=None
+  self._reset_requested=False
   if settings.weather_mode=='manual':
    try:self._city=json.loads(settings.city)['label'].split(',')[0]
    except (ValueError,KeyError):pass
@@ -28,57 +46,128 @@ class Bridge(QObject):
  language=Property(str,getLanguage,notify=changed)
  rotation=Property(int,lambda self:self.s.rotation,notify=changed)
  autostart=Property(bool,lambda self:self.s.autostart,notify=changed)
- startHidden=Property(bool,lambda self:self.s.start_hidden,notify=changed)
- cityLabel=Property(str,lambda self:self._city,notify=changed)
+ cityLabel=Property(str,lambda self:self._city or (('Automatic network location' if self.s.language=='en' else '自动网络定位') if self.mode=='auto' else ''),notify=changed)
  cityResults=Property('QVariantList',lambda self:self._results,notify=changed)
  searchStatus=Property(str,lambda self:self._status,notify=changed)
  searchBusy=Property(bool,lambda self:self._busy,notify=changed)
  saved=Property(bool,lambda self:self._saved,notify=changed)
  notice=Property(str,lambda self:self._notice,notify=noticeChanged)
  frameId=Property(int,lambda self:self._frame,notify=frameChanged)
+ monitorChecked=Property(bool,lambda self:self.monitor.snapshot()['checked'],notify=changed)
+ monitorBusy=Property(bool,lambda self:self.monitor.snapshot()['busy'],notify=changed)
+ monitorExternal=Property(bool,lambda self:self.monitor.snapshot().get('external',False),notify=changed)
+ storageBusy=Property(bool,lambda self:self.storage.snapshot()['busy'],notify=changed)
+ storageWriting=Property(bool,lambda self:self.storage.snapshot()['writing'],notify=changed)
+ storageReady=Property(bool,lambda self:self.storage.snapshot()['ready'],notify=changed)
+ storageStored=Property(bool,lambda self:self.storage.snapshot()['mode']=='stored',notify=changed)
+ storageProgress=Property(float,lambda self:self.storage.snapshot()['progress'],notify=changed)
+ storageName=Property(str,lambda self:self.storage.snapshot()['name'],notify=changed)
+ storageError=Property(bool,lambda self:bool(self.storage.snapshot()['error']),notify=changed)
+ defaultAvailable=Property(bool,lambda self:(self.storage.assets/'default-screen.gif').is_file(),notify=changed)
+ defaultConfirmation=Property(bool,lambda self:self._reset_requested,notify=defaultConfirmationChanged)
+ storageDetail=Property(str,lambda self:self.storage.snapshot()['detail'],notify=changed)
+ storagePreview=Property(str,lambda self:QUrl.fromLocalFile(self.storage.snapshot()['preview']).toString() if self.storage.snapshot()['preview'] else '',notify=changed)
+ def getStorageStatus(self):
+  labels={'idle':('Video, animated or still image · Up to 3.4 MB','视频、动态图或静态图 · 不超过 3.4 MB'),'prepare':('Preparing preview…','正在转换并生成预览…'),'ready':('Ready · Click Write to replace stored content','已准备好 · 点击写入后替换屏内内容'),'connecting':('Connecting to screen…','正在连接屏幕…'),'erase':('Preparing screen storage… Keep power connected','正在准备屏幕存储… 请保持供电'),'write':('Writing… Keep power connected','正在写入… 请保持供电'),'stored':('Stored · Real-time monitoring paused','写入完成 · 实时监控已暂停'),'live':('Real-time monitoring resumed','已恢复实时监控')}
+  snapshot=self.storage.snapshot()
+  if snapshot['error']:return snapshot['error']
+  return labels.get(snapshot['phase'],labels['idle'])[1 if self.s.language=='zh' else 0]
+ storageStatus=Property(str,getStorageStatus,notify=changed)
+ @Slot()
+ def chooseStorageFile(self):
+  if self.storage.snapshot()['busy']:return
+  cn=self.s.language=='zh'
+  name,_=QFileDialog.getOpenFileName(None,'选择屏幕内容' if cn else 'Choose screen content','',
+   'Media (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.apng *.mp4 *.m4v *.mov *.avi *.mkv *.webm *.wmv *.mpg *.mpeg *.ts *.flv);;All files (*)')
+  if name:self.storage.prepare(name);self.changed.emit()
+ @Slot()
+ def writeStorage(self):
+  if self.capture:return
+  self.storage.write();self.changed.emit()
+ @Slot()
+ def resumeMonitor(self):
+  if self.capture:return
+  self.storage.resume();self.changed.emit()
+ @Slot()
+ def requestRestoreDefault(self):
+  if not self.defaultAvailable or self.storage.snapshot()['busy']:return
+  self._reset_requested=True;self.defaultConfirmationChanged.emit()
+ @Slot(bool)
+ def confirmRestoreDefault(self,accepted):
+  if not self._reset_requested:return
+  self._reset_requested=False;self.defaultConfirmationChanged.emit()
+  if accepted and not self.capture:
+   self.storage.prepare(self.storage.assets/'default-screen.gif',write_after=True);self.changed.emit()
+ def getMonitorStatus(self):
+  labels={'detecting':('Checking existing sensors…','正在检测现有传感器…'),'missing':('Enable to install · Administrator approval once','首次开启时安装 · 需管理员确认'),'installing':('Installing temperature component…','正在安装温度监控组件…'),'existing':('Using existing sensor interface','使用现有传感器接口'),'ready':('Installed · Running','已安装 · 运行正常'),'starting':('Starting temperature monitoring…','正在启用温度监控…'),'off':('Monitoring off','温度监控已关闭'),'unsupported':('Installed · CPU sensor unavailable','已安装 · 暂无可用 CPU 温度'),'error':('Component unavailable · Re-enable to repair','组件异常 · 重新开启可修复'),'cancelled':('Installation cancelled','已取消安装'),'reboot':('Installed · Windows restart required','已安装 · 需重启 Windows')}
+  snapshot=self.monitor.snapshot();state=snapshot['state']
+  labels.update({'existing':('Existing sensor interface · No installation needed','已检测到现有接口 · 无需安装'),'uninstalling':('Removing our temperature component…','正在卸载我们安装的组件…'),'removed':('Our component removed','我们安装的组件已卸载'),'uninstall_reboot':('Removed · Windows restart required','已卸载 · 重启后完成驱动移除')})
+  if state=='off':labels['off']=('Installed · Monitoring off','已安装 · 温度监控已关闭') if snapshot['installed'] else ('Enable to detect sensors or install','开启时检测，缺少时安装')
+  return labels.get(state,labels['missing'])[1 if self.s.language=='zh' else 0]
+ monitorStatus=Property(str,getMonitorStatus,notify=changed)
+ @Slot(bool)
+ def setMonitorEnabled(self,value):
+  self.monitor.request(value);self.applySettings(temperature_monitor=self.monitor.enabled);self.changed.emit()
  def tell(self,text):self._notice=text;self.noticeChanged.emit()
+ def applySettings(self,**values):
+  value=replace(self.s,**values)
+  if value==self.s:return
+  self.s=value;self._dirty=True;self._saved=False;self.save_timer.start();self.changed.emit();self.updateMenu()
+ def flushSettings(self):
+  self.save_timer.stop()
+  if not self._dirty:return True
+  try:
+   if not self.capture:save(self.s)
+  except OSError as ex:self.tell('Could not save settings / 无法保存设置: '+str(ex));return False
+  self._dirty=False;self._saved=True;self.changed.emit();return True
  @Slot(str)
  def setLanguage(self,value):
-  self.s.language=value
-  if not self.capture:
-   try:save(self.s)
-   except OSError as ex:self.tell(str(ex))
-  self.changed.emit();self.updateMenu()
- @Slot(int,bool,bool)
- def saveSettings(self,rotation,auto,hidden):
-  value=replace(self.s,rotation=rotation,autostart=auto,start_hidden=hidden,weather_mode=self.mode,city=self.city)
+  if value in ('en','zh'):self.applySettings(language=value)
+ @Slot(int)
+ def setRotation(self,value):
+  if 0<=value<=359:self.applySettings(rotation=value)
+ @Slot(bool)
+ def setAutostart(self,value):
+  if value==self.s.autostart:return
   try:
-   if not self.capture:
-    if auto!=self.s.autostart:set_autostart(auto)
-    save(value)
-  except Exception as ex:self.tell(str(ex));return
-  self.s=value;self.weather.configure(value,self.loc);self._saved=True;self.changed.emit();self.updateMenu();QTimer.singleShot(1800,self.clearSaved)
- def clearSaved(self):self._saved=False;self.changed.emit()
+   if not self.capture:set_autostart(value)
+  except Exception as ex:self.changed.emit();self.tell(str(ex));return
+  self.applySettings(autostart=value)
+ @Slot()
+ def saveAndHide(self):
+  if self.flushSettings():self.hideWindow()
+ def applyWeather(self):
+  self.applySettings(weather_mode=self.mode,city=self.city)
+  self.weather.configure(self.s,self.loc)
  @Slot(bool)
  def setPreviewVisible(self,value):self.visible=value
  @Slot()
  def hideWindow(self):
+  if not self.flushSettings():return
   if self.tray and self.tray.isVisible():self.win.hide()
   elif self.capture:self.win.hide()
   else:self.tell('System tray unavailable. / 系统托盘不可用。')
  def show(self):self.win.show();self.win.raise_();self.win.requestActivate()
  def exit(self):
   if self.quitting:return
+  if self.storage.snapshot()['writing']:
+   self.show();self.tell('Writing screen content. Please wait. / 正在写入屏幕内容，请稍候。');return
+  if self.monitor.snapshot()['busy']:
+   self.show();self.tell('Temperature component is being updated. Please wait. / 温度监控组件正在处理，请稍候。');return
+  if not self.flushSettings():self.show();return
   self.quitting=True
   if self.shutdown and not self.shutdown():self.quitting=False;QTimer.singleShot(500,self.exit);return
   if self.tray:self.tray.hide()
   self.app.quit()
  def toggleAuto(self):
-  try:
-   if not self.capture:set_autostart(not self.s.autostart)
-   self.s.autostart=not self.s.autostart
-   if not self.capture:save(self.s)
-   self.changed.emit();self.updateMenu()
-  except Exception as ex:self.show();self.tell(str(ex))
+  self.setAutostart(not self.s.autostart)
  def updateMenu(self):
   if not self.tray:return
   cn=self.s.language=='zh';menu=QMenu();menu.setStyleSheet('QMenu{background:#1a2024;color:#e5ecef;border:1px solid #354047;padding:6px;}QMenu::item{padding:8px 26px;border-radius:4px;}QMenu::item:selected{background:#354331;}')
-  for text,fn in [('设置' if cn else 'Settings',self.show),('最小化' if cn else 'Minimize',self.hideWindow),('登录后自动启动' if cn else 'Start at login',self.toggleAuto),('退出' if cn else 'Exit',self.exit)]:
+  entries=[('设置' if cn else 'Settings',self.show),('最小化' if cn else 'Minimize',self.hideWindow),('登录后自动启动' if cn else 'Start at login',self.toggleAuto)]
+  if self.s.display_mode=='stored':entries.append(('实时监控' if cn else 'Real-time monitoring',self.resumeMonitor))
+  entries.append(('退出' if cn else 'Exit',self.exit))
+  for text,fn in entries:
    action=menu.addAction(text);action.triggered.connect(fn)
    if fn==self.toggleAuto:action.setCheckable(True);action.setChecked(self.s.autostart)
   old=getattr(self,'menu',None);self.menu=menu;self.tray.setContextMenu(menu)
@@ -97,6 +186,7 @@ class Bridge(QObject):
   if not 0<=index<len(self._results):return
   self.generation+=1
   row=self._results[index];self.loc=(row['latitude'],row['longitude'],row['label']);self.city=json.dumps({'latitude':row['latitude'],'longitude':row['longitude'],'label':row['label']},ensure_ascii=False);self.mode='manual';self._city=row['name'];self.changed.emit()
+  self.applyWeather()
  @Slot()
  def locateCity(self):
   self.generation+=1;gen=self.generation;self._city='Locating…' if self.s.language=='en' else '定位中…';self.changed.emit()
@@ -108,6 +198,12 @@ class Bridge(QObject):
    except Exception as ex:self.mail.put(('locate',gen,None,str(ex)))
   threading.Thread(target=run,daemon=True).start()
  def consume(self):
+  storage_snapshot=self.storage.snapshot()
+  if storage_snapshot!=self.storage_snapshot:
+   self.storage_snapshot=storage_snapshot;self.applySettings(display_mode=storage_snapshot['mode']);self.changed.emit()
+  snapshot=self.monitor.snapshot()
+  if snapshot!=self.monitor_snapshot:
+   self.monitor_snapshot=snapshot;self.applySettings(temperature_monitor=snapshot['enabled']);self.changed.emit()
   if self.mode=='auto' and not self._city and self.weather.location:
    self._city=self.weather.location[2].split(',')[0];self.changed.emit()
   while not self.mail.empty():
@@ -124,10 +220,11 @@ class Bridge(QObject):
     self._status=('No matching city' if self.s.language=='en' else '未找到城市') if not self._results else ''
    else:
     lat,lon=coordinates(data);label=', '.join(str(data.get(k,'')) for k in ('city','region','country') if data.get(k));self.loc=(lat,lon,label);self.mode='auto';self._city=str(data.get('city',''))
+    self.city='';self.applyWeather()
    self.changed.emit()
 
 def main():
- parser=argparse.ArgumentParser();parser.add_argument('--ui-capture',type=Path);parser.add_argument('--snapshot',type=Path);parser.add_argument('--demo',action='store_true');parser.add_argument('--self-test',action='store_true');args=parser.parse_args()
+ parser=argparse.ArgumentParser();parser.add_argument('--ui-capture',type=Path);parser.add_argument('--snapshot',type=Path);parser.add_argument('--demo',action='store_true');parser.add_argument('--self-test',action='store_true');parser.add_argument('--show-settings',action='store_true');parser.add_argument('--show-content',action='store_true');parser.add_argument('--performance-report',type=Path);args=parser.parse_args()
  if args.snapshot:
   from .model import Sample
   renderer=Renderer();collector=Collector();now=time.monotonic()
@@ -137,61 +234,111 @@ def main():
  QQuickStyle.setStyle('Basic')
  app=QApplication(sys.argv);app.setQuitOnLastWindowClosed(False);app.setApplicationName('RIO System Monitor');app.setFont(QFont('Segoe UI',10))
  assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets';app.setWindowIcon(QIcon(str(assets/'rio-icon.ico')))
- settings=Settings() if args.ui_capture else load();weather=WeatherWorker(settings);provider=Frames();bridge=Bridge(app,settings,weather,provider,bool(args.ui_capture));engine=QQmlApplicationEngine();engine.addImageProvider('monitor',provider);engine.rootContext().setContextProperty('bridge',bridge);engine.load(QUrl.fromLocalFile(str(assets/'ui/Main.qml')))
+ settings=Settings(weather_mode='off') if args.ui_capture else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not args.ui_capture);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets);bridge=Bridge(app,settings,weather,provider,bool(args.ui_capture),monitor=monitor,storage=storage);engine=QQmlApplicationEngine();engine.addImageProvider('monitor',provider);engine.rootContext().setContextProperty('bridge',bridge);engine.load(QUrl.fromLocalFile(str(assets/'ui/Main.qml')))
  if not engine.rootObjects():raise RuntimeError('Qt Quick main window failed to load')
  bridge.win=engine.rootObjects()[0];bridge.tray=QSystemTrayIcon(app.windowIcon(),app);bridge.tray.setToolTip('RIO System Monitor');bridge.updateMenu();bridge.tray.activated.connect(lambda reason:bridge.show() if reason in (QSystemTrayIcon.Trigger,QSystemTrayIcon.DoubleClick) else None)
  if not args.ui_capture:bridge.tray.show()
- if settings.start_hidden and not args.ui_capture:bridge.hideWindow()
- frames=queue.Queue(maxsize=1);stop=threading.Event();output=[None]
- def render_loop():
-  renderer=Renderer();collector=Collector();samples={};next_sample=0
+ if not args.ui_capture and not (args.show_settings or args.show_content):QTimer.singleShot(0,bridge.hideWindow)
+ if args.show_content:
+  def show_content():
+   storage.prepare(assets/'default-screen.gif');bridge.win.findChild(QObject,'storagePopup').setProperty('visible',True)
+  QTimer.singleShot(150,show_content)
+ frames=queue.Queue(maxsize=1);stop=threading.Event();reported_error=[None];render_times=deque(maxlen=300);render_count=[0];run_started=time.monotonic();latest_samples=[{}];sensor_errors=queue.Queue()
+ def collect_loop():
+  collector=None
   try:
+   collector=Collector(temperature=monitor)
    while not stop.is_set():
-    started=time.monotonic()
-    if started>=next_sample:samples=collector.collect();next_sample=started+1
-    if bridge.visible or output[0]:
-     frame=renderer.render(samples,weather=weather.reading)
-     if output[0] and not output[0].error:output[0].submit(frame.rotate(-bridge.s.rotation) if bridge.s.rotation else frame)
-     if bridge.visible:
-      try:frames.get_nowait()
-      except queue.Empty:pass
-      frames.put_nowait(frame.tobytes())
-    stop.wait(max(.005,1/bridge.s.fps-(time.monotonic()-started)))
-  finally:collector.gpu.close()
+    started=time.monotonic();latest_samples[0]=collector.collect();stop.wait(max(0,1-(time.monotonic()-started)))
+  except Exception as ex:sensor_errors.put(str(ex))
+  finally:
+   if collector:collector.gpu.close()
+ collector_worker=threading.Thread(target=collect_loop,daemon=True);collector_worker.start()
+ def render_loop():
+  renderer=Renderer()
+  while not stop.is_set():
+   started=time.monotonic()
+   if bridge.visible or session.live:
+    frame=renderer.render(latest_samples[0],weather=weather.reading)
+    render_times.append(time.monotonic()-started);render_count[0]+=1
+    session.submit(frame.rotate(-bridge.s.rotation) if bridge.s.rotation else frame)
+    if bridge.visible:
+     try:frames.get_nowait()
+     except queue.Empty:pass
+     frames.put_nowait(preview_bytes(frame))
+   stop.wait(max(0,1/bridge.s.fps-(time.monotonic()-started)))
  worker=threading.Thread(target=render_loop,daemon=True);worker.start()
  def tick():
   bridge.consume()
-  try:data=frames.get_nowait();provider.image=QImage(data,480,480,480*3,QImage.Format_RGB888).copy();bridge._frame+=1;bridge.frameChanged.emit()
+  if not sensor_errors.empty():bridge.tell('Sensors: '+sensor_errors.get())
+  usb=session.snapshot()
+  if usb['mode']=='monitor' and usb['usb_error'] and usb['usb_error']!=reported_error[0]:
+   reported_error[0]=usb['usb_error'];bridge.tell('USB: '+usb['usb_error'])
+  try:data=frames.get_nowait();provider.image=QImage(data,480,480,480*4,QImage.Format_RGBA8888).copy();bridge._frame+=1;bridge.frameChanged.emit()
   except queue.Empty:pass
  timer=QTimer();timer.timeout.connect(tick);timer.setTimerType(Qt.PreciseTimer);timer.start(33)
+ def performance_report():
+  if not args.performance_report:return
+  durations=list(render_times);elapsed=time.monotonic()-run_started
+  report=dict(seconds=round(elapsed,3),target_render_fps=bridge.s.fps,rendered_frames=render_count[0],render_mean_ms=round(statistics.mean(durations)*1000,3) if durations else None,**session.snapshot(),temperature=monitor.snapshot(),storage=storage.snapshot())
+  try:args.performance_report.write_text(json.dumps(report,indent=2),encoding='utf-8')
+  except OSError:pass
+ report_timer=QTimer();report_timer.timeout.connect(performance_report)
+ if args.performance_report:report_timer.start(1000)
  def shutdown():
-  stop.set();weather.close()
-  if output[0] and not output[0].close():return False
-  worker.join(2);return not worker.is_alive()
+  if not storage.close():return False
+  stop.set();weather.close();monitor.close()
+  if not session.close():return False
+  worker.join(2);collector_worker.join(2);return not worker.is_alive() and not collector_worker.is_alive()
  bridge.shutdown=shutdown
  def connect():
   try:
-   from .winusb import enumerate_paths
-   from .output import ScreenOutput
-   paths=enumerate_paths()
-   if len(paths)==1:output[0]=ScreenOutput(paths[0])
-  except Exception:pass
+   if settings.display_mode=='monitor':session.connect()
+  except Exception as exc:bridge.tell('USB: '+str(exc))
  if not args.ui_capture:QTimer.singleShot(500,connect)
  if args.ui_capture:
   args.ui_capture.mkdir(parents=True,exist_ok=True)
   def capture_main():
-   bridge.win.grabWindow().save(str(args.ui_capture/'qt-main.png'));popup=bridge.win.findChild(QObject,'cityPopup');popup.setProperty('visible',True);QTimer.singleShot(350,capture_city)
+   bridge.win.grabWindow().save(str(args.ui_capture/'qt-main.png'));slider=bridge.win.findChild(QObject,'rotationSlider');slider.setProperty('value',39);QMetaObject.invokeMethod(slider,'moved');QTimer.singleShot(400,capture_rotation)
+  def capture_rotation():
+   shot=bridge.win.grabWindow();shot.save(str(args.ui_capture/'qt-rotation39.png'));scale=shot.width()/bridge.win.width()
+   # Sample where the rotated square used to escape the preview box.
+   pixels=[shot.pixelColor(round(x*scale),round(y*scale)).name() for x,y in ((32,185),(206,185),(119,98),(119,272))]
+   bridge.rotation_clip_proof=all(color=='#111416' for color in pixels)
+   bridge.live_rotation_proof=bridge.s.rotation==39 and not bridge._dirty
+   corners=[provider.image.pixelColor(x,y).alpha() for x,y in ((0,0),(479,0),(0,479),(479,479))]
+   bridge.transparent_preview_proof=all(alpha==0 for alpha in corners) and provider.image.pixelColor(240,240).alpha()==255
+   slider=bridge.win.findChild(QObject,'rotationSlider');slider.setProperty('value',0);QMetaObject.invokeMethod(slider,'moved');popup=bridge.win.findChild(QObject,'cityPopup');popup.setProperty('visible',True);QTimer.singleShot(350,capture_city)
   def capture_city():
    bridge.win.grabWindow().save(str(args.ui_capture/'qt-city.png'))
+   bridge.win.findChild(QObject,'cityPopup').setProperty('visible',False)
+   storage.prepare(assets/'default-screen.gif');bridge.win.findChild(QObject,'storagePopup').setProperty('visible',True);QTimer.singleShot(600,capture_storage)
+  def capture_storage():
+   if storage.snapshot()['busy']:QTimer.singleShot(200,capture_storage);return
+   bridge.consume();bridge.win.grabWindow().save(str(args.ui_capture/'qt-storage.png'))
    if args.self_test:
-    proof={'single_main_window':len(engine.rootObjects())==1,'content_width':420,'outer_width':bridge.win.width(),'frameless':bool(bridge.win.flags() & Qt.FramelessWindowHint)}
+    proof={'single_main_window':len(engine.rootObjects())==1,'content_width':420,'outer_width':bridge.win.width(),'frameless':bool(bridge.win.flags() & Qt.FramelessWindowHint),'rotated_preview_contained':bridge.rotation_clip_proof,'live_rotation_autosaved':bridge.live_rotation_proof,'transparent_preview_corners':bridge.transparent_preview_proof,'no_start_minimized_control':bridge.win.findChild(QObject,'hiddenSwitch') is None,'temperature_switch_present':bridge.win.findChild(QObject,'monitorSwitch') is not None}
+    proof['storage_button_present']=bridge.win.findChild(QObject,'storageButton') is not None
+    proof['local_media_preview_ready']=storage.snapshot()['ready'] and bridge.storagePreview.startswith('file:')
+    proof['private_default_available']=bridge.defaultAvailable
+    proof['restore_icon_present']=bridge.win.findChild(QObject,'restoreDefaultButton') is not None
+    QMetaObject.invokeMethod(bridge.win.findChild(QObject,'restoreDefaultButton'),'clicked')
+    proof['reset_requires_confirmation']=bridge.defaultConfirmation and not storage.snapshot()['writing'] and storage.session.mode=='monitor'
+    bridge.confirmRestoreDefault(False);proof['reset_cancel_preserves_content']=not bridge.defaultConfirmation and not storage.snapshot()['writing']
+    proof['capture_performs_no_resource_write']=session.output is None and not session.resource_active and session.mode=='monitor'
+    bridge.monitor.external=True;bridge.changed.emit()
+    proof['existing_sensor_toggle_disabled']=not bridge.win.findChild(QObject,'monitorSwitch').property('enabled')
+    bridge.monitor.external=False;bridge.changed.emit()
+    bridge.win.findChild(QObject,'storagePopup').setProperty('visible',False)
     bridge.tray.show();bridge.setLanguage('zh');proof['chinese_menu']=[a.text() for a in bridge.menu.actions()]==['设置','最小化','登录后自动启动','退出']
     bridge.toggleAuto();proof['autostart_sync']=bridge.s.autostart and bridge.menu.actions()[2].isChecked()
-    bridge.hideWindow();proof['hide_to_tray']=not bridge.win.isVisible() and bridge.tray.isVisible();bridge.show();proof['restore']=bridge.win.isVisible()
+    bridge.win.findChild(QObject,'cityPopup').setProperty('visible',False);QMetaObject.invokeMethod(bridge.win.findChild(QObject,'saveButton'),'clicked');proof['save_hides_to_tray']=not bridge.win.isVisible() and bridge.tray.isVisible();bridge.show();proof['restore']=bridge.win.isVisible()
     bridge.setLanguage('en');proof['english_menu']=[a.text() for a in bridge.menu.actions()]==['Settings','Minimize','Start at login','Exit']
     assert all(v for k,v in proof.items() if k not in ('content_width','outer_width')),proof
     (args.ui_capture/'qt-proof.json').write_text(json.dumps(proof,indent=2))
-   bridge.exit()
+   bridge.requestRestoreDefault();QTimer.singleShot(150,capture_reset)
+  def capture_reset():
+   bridge.win.grabWindow().save(str(args.ui_capture/'qt-reset-confirmation.png'));bridge.confirmRestoreDefault(False);bridge.exit()
   QTimer.singleShot(1800,capture_main)
  result=app.exec();shutdown();return result
 if __name__=='__main__':main()

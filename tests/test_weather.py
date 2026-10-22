@@ -18,13 +18,13 @@ class WeatherTests(unittest.TestCase):
  def test_color_boundaries(self):
   self.assertGreater(color(9)[2],color(9)[0]);self.assertGreater(color(21)[0],color(21)[2])
   self.assertEqual(color(20),(255,215,64))
- @unittest.skipUnless((Path(__file__).resolve().parents[1]/'assets/fonts/Born2bSporty.otf').is_file(),'Private fonts are required')
+ @unittest.skipUnless((Path(__file__).resolve().parents[1]/'assets/fonts/Born2bSporty.otf').is_file(),'Private font unavailable')
  def test_temperature_range_and_units(self):
   font=Path(__file__).resolve().parents[1]/'assets/fonts/Born2bSporty.otf'
   for v in (None,-45,-1,0,9,10,20,21,45):self.assertEqual(temperature(v,font).size,(48,48))
   a,b=temperature(2,font),temperature(30,font)
   self.assertEqual(a.getpixel((30,33)),b.getpixel((30,33)))
- @unittest.skipUnless((Path(__file__).resolve().parents[1]/'assets/fonts/Born2bSporty.otf').is_file(),'Private fonts are required')
+ @unittest.skipUnless((Path(__file__).resolve().parents[1]/'assets/fonts/Born2bSporty.otf').is_file(),'Private font unavailable')
  def test_panel_is_only_local(self):
   assets=Path(__file__).resolve().parents[1]/'assets';p=WeatherPanel(assets)
   im=Image.new('RGB',(480,480));p.draw(im,WeatherReading('sun',24,0),0)

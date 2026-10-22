@@ -8,7 +8,7 @@ class SourceTests(unittest.TestCase):
    if w.reading is not None or 'unavailable' in w.status:return
    time.sleep(.01)
  def test_off_makes_no_network_requests(self):
-  calls=[];w=WeatherWorker(Settings(),lambda u:calls.append(u));time.sleep(.03);w.close();self.assertEqual(calls,[])
+  calls=[];w=WeatherWorker(Settings(weather_mode='off'),lambda u:calls.append(u));time.sleep(.03);w.close();self.assertEqual(calls,[])
  def test_auto_validates_and_maps(self):
   calls=[]
   def fetch(u):

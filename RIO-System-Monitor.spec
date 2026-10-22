@@ -4,9 +4,6 @@ from pathlib import Path
 sys.path.insert(0,SPECPATH)
 from packaging_filter import keep
 root=Path(SPECPATH)
-sys.path.insert(0,str(root/'tools'))
-from verify_private_assets import verify
-verify(root/'assets')
 a=Analysis([str(root/'launch.py')],pathex=[str(root/'src')],binaries=[],datas=[(str(root/'assets'),'assets')],hiddenimports=[],hookspath=[],hooksconfig={},runtime_hooks=[],excludes=['tkinter','PIL.AvifImagePlugin','PIL._avif'],noarchive=False)
 removed=[n for n,_,_ in list(a.binaries)+list(a.datas) if not keep(n)]
 a.binaries=[entry for entry in a.binaries if keep(entry[0])]

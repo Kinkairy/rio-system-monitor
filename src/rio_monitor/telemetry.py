@@ -1,26 +1,29 @@
 """Read-only OS counters. Never install a sensor driver or substitute demo data."""
 import time
 import psutil
-from .model import Sample
+from .model import Sample,Readings
 
 class Collector:
-    def __init__(self):
+    def __init__(self,temperature=None):
         self.warmed = False
         self.previous_net = None
         self.previous_time = None
-        from .gpu import Nvidia
-        self.gpu = Nvidia()
+        from .sensors import HardwareSensors
+        self.gpu = HardwareSensors(component=temperature)
         psutil.cpu_percent(None)
     def collect(self):
         now = time.monotonic()
         mem = psutil.virtual_memory()
         net = psutil.net_io_counters()
         cpu=psutil.cpu_percent(None)
-        result = {'cpu': Sample(cpu if self.warmed else None,now),
+        temperature,gpus,selected=self.gpu.read()
+        result = Readings({'cpu': Sample(cpu if self.warmed else None,now),
                   'ram_used':Sample(mem.used/1024**3,now),
                   'ram_total':Sample(mem.total/1024**3,now),
-                  'temperature':Sample(None,now,'unavailable'),
-                  'gpu':Sample(self.gpu.usage(),now,'nvml')}
+                  'temperature':Sample(temperature,now,self.gpu.component.source if self.gpu.component else 'Windows CPU thermal zone'),
+                  'gpu':Sample(selected.usage if selected else None,now,selected.identifier if selected else 'unavailable')},
+                  cpu_name=self.gpu.cpu_name,gpus=gpus,selected_gpu=selected)
+        result['gpu_temperature']=Sample(selected.temperature if selected else None,now,selected.identifier if selected else 'unavailable')
         rx=tx=None
         if self.previous_net is not None and now>self.previous_time:
             dt=now-self.previous_time

@@ -1,6 +1,6 @@
 """Sparse temperature sheen: random idle intervals, clipped to lime glyphs."""
-import random
-from PIL import Image,ImageChops
+import random,math
+from PIL import Image,ImageChops,ImageDraw
 
 class TemperatureSheen:
     duration=1.5
@@ -31,6 +31,12 @@ class TemperatureSheen:
         center=-110+phase*(w+220)
         # Crisp pure-white diagonal highlight, clipped to glyphs only.
         band=Image.new('L',(w,h))
-        band.putdata([255 if (abs(x+(y-h/2)*.32-center)<=26 or abs(x+(y-h/2)*.32-center-60)<=8) else 0 for y in range(h) for x in range(w)])
+        draw=ImageDraw.Draw(band)
+        # Rasterize two spans per row instead of scanning 67,000 pixels in Python.
+        for y in range(h):
+            shift=(y-h/2)*.32
+            for offset,half in ((0,26),(60,8)):
+                left=max(0,math.ceil(center+offset-shift-half));right=min(w-1,math.floor(center+offset-shift+half))
+                if left<=right:draw.line((left,y,right,y),fill=255)
         alpha=ImageChops.multiply(mask,band)
         im.paste((255,255,255),box,alpha)

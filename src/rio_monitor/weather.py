@@ -1,6 +1,7 @@
 """Approved code-drawn weather icons. Time is monotonic seconds, not frame counts."""
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageChops
 from dataclasses import dataclass
+from functools import lru_cache
 import math
 
 @dataclass(frozen=True)
@@ -160,6 +161,7 @@ def color(t):
             return tuple((round(v + (w - v) * p) for v, w in zip(c, e)))
     return stops[-1][1]
 
+@lru_cache(maxsize=256)
 def temperature(v,font_path):
  a=Image.new('RGBA',(192,192));d=ImageDraw.Draw(a);col=(127,160,150) if v is None else color(v)
  d.rounded_rectangle((30,51,49,116),radius=9,outline='#b6f9e9',width=5)
@@ -169,7 +171,7 @@ def temperature(v,font_path):
  for sz in range(117,12,-1):
   f=ImageFont.truetype(str(font_path),sz);b=d.textbbox((0,0),s,font=f)
   if b[2]-b[0]<=76:break
- d.text((105-(b[2]-b[0])/2-b[0],64-b[1]),s,font=f,fill=col)
+ d.text((105-(b[2]-b[0])/2-b[0],52-b[1]),s,font=f,fill=col)
  # Small degree + C, centered below the numeric column.
  d.ellipse((147,60,158,71),outline='#9cf53d',width=3)
  d.line([(166,83),(153,83),(153,105),(166,105)],fill='#9cf53d',width=6)

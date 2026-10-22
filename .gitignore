@@ -5,6 +5,9 @@ build/
 dist/
 qt-capture/
 bundle-pruning.json
+sensors/Payload.generated.cs
+sensors/payload-manifest.json
+.build-cache/
 *.pfx
 *.p12
 *.key
