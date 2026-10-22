@@ -74,6 +74,11 @@ class Bridge(QObject):
   return labels.get(snapshot['phase'],labels['idle'])[1 if self.s.language=='zh' else 0]
  storageStatus=Property(str,getStorageStatus,notify=changed)
  @Slot()
+ def prepareStoragePreview(self):
+  state=self.storage.snapshot()
+  if not state['busy'] and not state['name'] and self.defaultAvailable:
+   self.storage.prepare(self.storage.assets/'default-screen.gif');self.changed.emit()
+ @Slot()
  def chooseStorageFile(self):
   if self.storage.snapshot()['busy']:return
   cn=self.s.language=='zh'
@@ -164,7 +169,7 @@ class Bridge(QObject):
  def updateMenu(self):
   if not self.tray:return
   cn=self.s.language=='zh';menu=QMenu();menu.setStyleSheet('QMenu{background:#1a2024;color:#e5ecef;border:1px solid #354047;padding:6px;}QMenu::item{padding:8px 26px;border-radius:4px;}QMenu::item:selected{background:#354331;}')
-  entries=[('设置' if cn else 'Settings',self.show),('最小化' if cn else 'Minimize',self.hideWindow),('登录后自动启动' if cn else 'Start at login',self.toggleAuto)]
+  entries=[('设置' if cn else 'Settings',self.show),('登录后自动启动' if cn else 'Start at login',self.toggleAuto)]
   if self.s.display_mode=='stored':entries.append(('实时监控' if cn else 'Real-time monitoring',self.resumeMonitor))
   entries.append(('退出' if cn else 'Exit',self.exit))
   for text,fn in entries:
@@ -312,7 +317,7 @@ def main():
   def capture_city():
    bridge.win.grabWindow().save(str(args.ui_capture/'qt-city.png'))
    bridge.win.findChild(QObject,'cityPopup').setProperty('visible',False)
-   storage.prepare(assets/'default-screen.gif');bridge.win.findChild(QObject,'storagePopup').setProperty('visible',True);QTimer.singleShot(600,capture_storage)
+   QMetaObject.invokeMethod(bridge.win.findChild(QObject,'storageButton'),'clicked');QTimer.singleShot(600,capture_storage)
   def capture_storage():
    if storage.snapshot()['busy']:QTimer.singleShot(200,capture_storage);return
    bridge.consume();bridge.win.grabWindow().save(str(args.ui_capture/'qt-storage.png'))
@@ -321,6 +326,9 @@ def main():
     proof['storage_button_present']=bridge.win.findChild(QObject,'storageButton') is not None
     proof['local_media_preview_ready']=storage.snapshot()['ready'] and bridge.storagePreview.startswith('file:')
     proof['private_default_available']=bridge.defaultAvailable
+    proof['default_preview_loaded_on_open']=storage.snapshot()['name']=='default-screen.gif' and storage.snapshot()['ready']
+    media_popup=bridge.win.findChild(QObject,'storagePopup');city_popup=bridge.win.findChild(QObject,'cityPopup')
+    proof['shared_dialog_dimensions']=media_popup.property('width')==city_popup.property('width')==280 and media_popup.property('height')==city_popup.property('height')==356
     proof['restore_icon_present']=bridge.win.findChild(QObject,'restoreDefaultButton') is not None
     QMetaObject.invokeMethod(bridge.win.findChild(QObject,'restoreDefaultButton'),'clicked')
     proof['reset_requires_confirmation']=bridge.defaultConfirmation and not storage.snapshot()['writing'] and storage.session.mode=='monitor'
@@ -330,10 +338,10 @@ def main():
     proof['existing_sensor_toggle_disabled']=not bridge.win.findChild(QObject,'monitorSwitch').property('enabled')
     bridge.monitor.external=False;bridge.changed.emit()
     bridge.win.findChild(QObject,'storagePopup').setProperty('visible',False)
-    bridge.tray.show();bridge.setLanguage('zh');proof['chinese_menu']=[a.text() for a in bridge.menu.actions()]==['设置','最小化','登录后自动启动','退出']
-    bridge.toggleAuto();proof['autostart_sync']=bridge.s.autostart and bridge.menu.actions()[2].isChecked()
+    bridge.tray.show();bridge.setLanguage('zh');proof['chinese_menu']=[a.text() for a in bridge.menu.actions()]==['设置','登录后自动启动','退出']
+    bridge.toggleAuto();proof['autostart_sync']=bridge.s.autostart and any(a.isCheckable() and a.isChecked() for a in bridge.menu.actions())
     bridge.win.findChild(QObject,'cityPopup').setProperty('visible',False);QMetaObject.invokeMethod(bridge.win.findChild(QObject,'saveButton'),'clicked');proof['save_hides_to_tray']=not bridge.win.isVisible() and bridge.tray.isVisible();bridge.show();proof['restore']=bridge.win.isVisible()
-    bridge.setLanguage('en');proof['english_menu']=[a.text() for a in bridge.menu.actions()]==['Settings','Minimize','Start at login','Exit']
+    bridge.setLanguage('en');proof['english_menu']=[a.text() for a in bridge.menu.actions()]==['Settings','Start at login','Exit']
     assert all(v for k,v in proof.items() if k not in ('content_width','outer_width')),proof
     (args.ui_capture/'qt-proof.json').write_text(json.dumps(proof,indent=2))
    bridge.requestRestoreDefault();QTimer.singleShot(150,capture_reset)

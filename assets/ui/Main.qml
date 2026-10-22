@@ -14,6 +14,12 @@ ApplicationWindow {
  font.family: win.zh ? "Microsoft YaHei UI" : "Segoe UI"
  font.pixelSize: 13
  component RioText: Text { font.family: win.zh ? "Microsoft YaHei UI" : "Segoe UI" }
+ component SoftShadow: Item {
+  property bool pressed: false
+  property real cornerRadius: 8
+  Rectangle { x: -1; y: 2; width: parent.width+2; height: parent.height+2; radius: parent.cornerRadius+1; color: "black"; opacity: parent.pressed ? 0.06 : 0.12 }
+  Rectangle { y: 2; width: parent.width; height: parent.height; radius: parent.cornerRadius; color: "black"; opacity: parent.pressed ? 0.08 : 0.18 }
+ }
  component ActionButton: Button {
   id: b
   property color fill: "#24282b"
@@ -23,11 +29,10 @@ ApplicationWindow {
   hoverEnabled: true
   implicitHeight: 38
   background: Item {
-   Rectangle { x: -1; y: 2; width: parent.width+2; height: parent.height+2; radius: 9; color: "#000000"; opacity: b.down ? 0.06 : 0.12; visible: b.fill.a>0 || b.hovered || b.down }
-   Rectangle { y: 2; width: parent.width; height: parent.height; radius: 8; color: "#000000"; opacity: b.down ? 0.08 : 0.18; visible: b.fill.a>0 || b.hovered || b.down }
+   SoftShadow { objectName: "buttonShadow"; anchors.fill: parent; pressed: b.down; visible: b.fill.a>0 || b.hovered || b.down }
    Rectangle { objectName: "buttonSurface"; anchors.fill: parent; radius: 8; color: b.down ? Qt.darker(b.hoverFill,1.18) : b.hovered ? b.hoverFill : b.fill; border.width: b.showOutline && (b.hovered || b.activeFocus) ? 1 : 0; border.color: "#a7eb52"; Behavior on color { ColorAnimation { duration: 100 } } }
   }
-  contentItem: RioText { text: b.text; color: b.ink; font: b.font; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+  contentItem: RioText { text: b.text; color: b.ink; font: b.font; style: Text.Raised; styleColor: "#66000000"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
  }
  component RefreshButton: ActionButton {
   width: 38; text: "↻"; ink: "#a7eb52"; font.pixelSize: 22
@@ -37,9 +42,24 @@ ApplicationWindow {
   width: 26; implicitHeight: 30; padding: 0; leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
   text: "×"; fill: "transparent"; hoverFill: "#a7eb52"; ink: hovered || down ? "#17210f" : "#d0d8dd"; showOutline: false; Accessible.name: win.tr("Close","关闭")
   contentItem: Item {
-   Rectangle { anchors.centerIn: parent; anchors.alignWhenCentered: false; width: 14; height: 1.5; rotation: 45; color: closeButton.ink; antialiasing: true }
-   Rectangle { anchors.centerIn: parent; anchors.alignWhenCentered: false; width: 14; height: 1.5; rotation: -45; color: closeButton.ink; antialiasing: true }
+   Item { anchors.fill: parent; anchors.topMargin: 1; anchors.bottomMargin: -1
+    Rectangle { anchors.centerIn: parent; anchors.alignWhenCentered: false; width: 14; height: 2; rotation: 45; color: "#66000000"; antialiasing: true }
+    Rectangle { anchors.centerIn: parent; anchors.alignWhenCentered: false; width: 14; height: 2; rotation: -45; color: "#66000000"; antialiasing: true }
+   }
+   Rectangle { objectName: "closeStrokeA"; anchors.centerIn: parent; anchors.alignWhenCentered: false; width: 14; height: 1.5; rotation: 45; color: closeButton.ink; antialiasing: true }
+   Rectangle { objectName: "closeStrokeB"; anchors.centerIn: parent; anchors.alignWhenCentered: false; width: 14; height: 1.5; rotation: -45; color: closeButton.ink; antialiasing: true }
   }
+ }
+ component DialogPopup: Popup {
+  popupType: Popup.Item; parent: Overlay.overlay; x: (win.width-width)/2; y: (win.height-height)/2
+  width: 280; height: 356; modal: true; focus: true; padding: 20
+  background: Rectangle { color: "#1a2024"; radius: 12; border.color: "#354047" }
+  Overlay.modal: Rectangle { color: "#99080a0c" }
+ }
+ component FieldSurface: Item {
+  property bool highlighted: false
+  SoftShadow { objectName: "fieldShadow"; anchors.fill: parent; cornerRadius: 7 }
+  Rectangle { anchors.fill: parent; color: "#11171b"; radius: 7; border.color: parent.highlighted ? "#a7eb52" : "#354047"; border.width: 1 }
  }
  component RioSwitch: Switch {
   id: sw
@@ -73,7 +93,11 @@ ApplicationWindow {
    RioText { x: 109; y: 24; text: win.tr("Settings","设置"); color: "#e9edef"; font.pixelSize: 17 }
    Rectangle {
     x: 292; y: 23; width: 76; height: 26; radius: 6; color: "#272d30"
-    Rectangle { x: win.zh ? 39 : 2; y: 2; width: 35; height: 22; radius: 4; color: "#ffdf32"; Behavior on x { NumberAnimation { duration: 140 } } }
+    SoftShadow { anchors.fill: parent; cornerRadius: 6; z: -1 }
+    Item { x: win.zh ? 39 : 2; y: 2; width: 35; height: 22; Behavior on x { NumberAnimation { duration: 140 } }
+     SoftShadow { anchors.fill: parent; cornerRadius: 4 }
+     Rectangle { anchors.fill: parent; radius: 4; color: "#ffdf32" }
+    }
     Row { anchors.fill: parent; Repeater { model: ["EN","CN"]; delegate: ActionButton { required property string modelData; required property int index; width: 38; height: 26; text: modelData; fill: "transparent"; showOutline: false; hoverFill: (win.zh === (index===1)) ? "#ffed7c" : "#414c52"; ink: (win.zh === (index===1)) ? "#161a10" : "#d0d8dd"; font.pixelSize: 10; onClicked: bridge.setLanguage(index===1 ? "zh":"en") } } }
    }
    CloseButton { objectName: "settingsCloseButton"; x: 377; y: 20; onClicked: bridge.hideWindow() }
@@ -122,29 +146,38 @@ ApplicationWindow {
   }
   ActionButton { objectName: "saveButton"; x: 310; y: 549; width: 90; height: 34; text: win.tr("Save","保存"); fill: "#a7eb52"; ink: "#17210f"; onClicked: bridge.saveAndHide() }
  }
- Popup {
-  id: storagePopup; objectName: "storagePopup"; popupType: Popup.Item; parent: Overlay.overlay; x: (win.width-width)/2; y: (win.height-height)/2; width: 232; height: 294+(bridge.storageBusy || bridge.storageError ? 34 : 0)+(bridge.storageWriting ? 12 : 0); modal: true; focus: true; padding: 18
+ DialogPopup {
+  id: storagePopup; objectName: "storagePopup"
+  onOpened: { bridge.prepareStoragePreview(); storageFileButton.forceActiveFocus() }
   closePolicy: bridge.storageWriting ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
-  background: Rectangle { color: "#1a2024"; radius: 12; border.color: "#354047" }
-  Overlay.modal: Rectangle { color: "#99080a0c" }
   ColumnLayout {
-   anchors.fill: parent; spacing: 8
+   anchors.fill: parent; spacing: 14
    RowLayout { Layout.fillWidth: true; RioText { text: win.tr("Screen content","屏幕内容"); color: "#edf0f2"; font.pixelSize: 17; Layout.fillWidth: true } CloseButton { objectName: "storageCloseButton"; Layout.preferredWidth: 26; enabled: !bridge.storageWriting; onClicked: storagePopup.close() } }
-   Item { Layout.fillWidth: true; Layout.preferredHeight: 120; Layout.maximumHeight: 120
-    AnimatedImage { anchors.centerIn: parent; width: 120; height: 120; source: bridge.storagePreview; playing: storagePopup.visible; fillMode: Image.PreserveAspectFit; visible: source.toString() !== "" }
-    RioText { anchors.centerIn: parent; width: parent.width; text: win.tr("Preview your video or image","预览视频或图片"); color: "#819099"; horizontalAlignment: Text.AlignHCenter; visible: bridge.storagePreview === "" }
+   ActionButton {
+    id: storageFileButton; objectName: "chooseStorageButton"; Layout.fillWidth: true; implicitHeight: 40; leftPadding: 12; rightPadding: 12
+    text: win.tr("Choose file","选择文件"); enabled: !bridge.storageBusy; onClicked: bridge.chooseStorageFile()
+    background: FieldSurface { highlighted: storageFileButton.activeFocus || storageFileButton.hovered }
+    contentItem: RioText { text: storageFileButton.text; color: "#edf0f2"; font: storageFileButton.font; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
    }
-   RioText { Layout.fillWidth: true; Layout.minimumWidth: 0; text: bridge.storageName || win.tr("No file selected","尚未选择文件"); color: "#edf0f2"; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
-   RioText { Layout.fillWidth: true; Layout.minimumWidth: 0; text: bridge.storageDetail || win.tr("Up to 3.4 MB · Fits 480 × 480 · No audio","不超过 3.4 MB · 自动适配 480 × 480 · 无声"); color: "#91a0a9"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap }
+   Item {
+    id: storagePreviewArea; Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 80; clip: true
+    property real previewSide: Math.min(128,Math.max(48,height-storageFilename.implicitHeight-storageFileInfo.implicitHeight-8))
+    Column {
+     anchors.centerIn: parent; width: parent.width; spacing: 4
+     Item { anchors.horizontalCenter: parent.horizontalCenter; width: storagePreviewArea.previewSide; height: width
+      AnimatedImage { anchors.fill: parent; source: bridge.storagePreview; playing: storagePopup.visible; fillMode: Image.PreserveAspectFit; visible: source.toString() !== "" }
+      RioText { anchors.centerIn: parent; width: parent.width; wrapMode: Text.WordWrap; text: win.tr("Preview your video or image","预览视频或图片"); color: "#819099"; horizontalAlignment: Text.AlignHCenter; visible: bridge.storagePreview === "" }
+     }
+     RioText { id: storageFilename; width: parent.width; text: bridge.storageName || win.tr("No file selected","尚未选择文件"); color: "#edf0f2"; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
+     RioText { id: storageFileInfo; width: parent.width; text: bridge.storageDetail || win.tr("Up to 3.4 MB · Fits 480 × 480 · No audio","不超过 3.4 MB · 自动适配 480 × 480 · 无声"); color: "#91a0a9"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap }
+    }
+   }
    RioText { visible: bridge.storageBusy || bridge.storageError; Layout.fillWidth: true; Layout.preferredHeight: 26; wrapMode: Text.WordWrap; text: bridge.storageStatus; color: "#d4e0e5"; font.pixelSize: 11 }
    ProgressBar { visible: bridge.storageWriting; Layout.fillWidth: true; from: 0; to: 1; value: bridge.storageProgress
     background: Rectangle { implicitHeight: 4; color: "#354047"; radius: 2 }
     contentItem: Item { implicitHeight: 4; Rectangle { width: parent.width*(bridge.storageBusy && !bridge.storageWriting ? 0.3 : bridge.storageProgress); height: 4; radius: 2; color: "#a7eb52" } }
    }
-   RowLayout { Layout.fillWidth: true; spacing: 8
-    ActionButton { objectName: "chooseStorageButton"; Layout.fillWidth: true; text: win.tr("Choose file","选择文件"); enabled: !bridge.storageBusy; onClicked: bridge.chooseStorageFile() }
-    ActionButton { objectName: "writeStorageButton"; Layout.fillWidth: true; text: bridge.storageWriting ? Math.round(bridge.storageProgress*100)+"%" : win.tr("Write","写入"); fill: "#a7eb52"; ink: "#17210f"; enabled: bridge.storageReady && !bridge.storageBusy; onClicked: bridge.writeStorage() }
-   }
+   ActionButton { objectName: "writeStorageButton"; Layout.fillWidth: true; text: bridge.storageWriting ? Math.round(bridge.storageProgress*100)+"%" : win.tr("Write","写入"); fill: "#a7eb52"; ink: "#17210f"; enabled: bridge.storageReady && !bridge.storageBusy; onClicked: bridge.writeStorage() }
   }
  }
  Popup {
@@ -160,16 +193,14 @@ ApplicationWindow {
    }
   }
  }
- Popup {
-  id: cityPopup; popupType: Popup.Item; objectName: "cityPopup"; parent: Overlay.overlay; x: (win.width-width)/2; y: (win.height-height)/2; width: 376; height: 356; modal: true; focus: true; padding: 20
-  background: Rectangle { color: "#1a2024"; radius: 12; border.color: "#354047" }
-  Overlay.modal: Rectangle { color: "#99080a0c" }
+ DialogPopup {
+  id: cityPopup; objectName: "cityPopup"
   ColumnLayout {
    anchors.fill: parent; spacing: 14
    RowLayout { Layout.fillWidth: true; RioText { text: win.tr("Choose your city","选择城市"); color: "#edf0f2"; font.pixelSize: 17; Layout.fillWidth: true } CloseButton { objectName: "cityCloseButton"; Layout.preferredWidth: 26; onClicked: cityPopup.close() } }
    TextField {
     id: searchField; objectName: "searchField"; Layout.fillWidth: true; implicitHeight: 40; placeholderText: win.tr("Search city or region","搜索城市或地区"); color: "#edf0f2"; placeholderTextColor: "#7f8d95"; selectByMouse: true; leftPadding: 12; font.pixelSize: 13
-    background: Rectangle { color: "#11171b"; radius: 7; border.color: searchField.activeFocus ? "#a7eb52" : "#354047"; border.width: 1 }
+    background: FieldSurface { highlighted: searchField.activeFocus || searchField.hovered }
     onAccepted: bridge.searchCities(text)
    }
    ListView {
@@ -178,7 +209,10 @@ ApplicationWindow {
      hoverEnabled: true
      required property var modelData; required property int index
      width: ListView.view.width; height: 48
-     background: Rectangle { color: parent.hovered ? "#303b3f" : "#242d32"; radius: 7 }
+     background: Item {
+      SoftShadow { anchors.fill: parent; cornerRadius: 7; pressed: parent.parent.down }
+      Rectangle { anchors.fill: parent; color: parent.parent.hovered ? "#303b3f" : "#242d32"; radius: 7 }
+     }
      contentItem: Column { RioText { text: modelData.name; color: "#e4e9eb"; font.pixelSize: 13 } RioText { text: modelData.detail; color: "#8e9ca4"; font.pixelSize: 10; elide: Text.ElideRight; width: parent.width } }
      onClicked: { bridge.selectCity(index); cityPopup.close() }
     }

@@ -72,7 +72,6 @@ def main():
             def dispatch(fn):return lambda icon,item:root.after(0,fn)
             tray=pystray.Icon('RIO',Image.open(renderer.assets/'rio-icon.png'),'RIO Monitor',pystray.Menu(
                 pystray.MenuItem(lambda item:tr('Settings','设置'),dispatch(show),default=True),
-                pystray.MenuItem(lambda item:tr('Minimize','最小化'),dispatch(hide)),
                 pystray.MenuItem(lambda item:tr('Start at login','登录后自动启动'),dispatch(toggle_autostart),checked=lambda item:settings.autostart),
                 pystray.MenuItem(lambda item:tr('Exit','退出'),dispatch(close))))
             tray.run_detached()
