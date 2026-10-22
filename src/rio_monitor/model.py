@@ -2,6 +2,22 @@ from dataclasses import dataclass
 import math
 
 @dataclass(frozen=True)
+class GPUReading:
+    identifier:str
+    name:str
+    usage:float | None
+    temperature:float | None
+    timestamp:float
+    index:int=0
+    count:int=1
+
+class Readings(dict):
+    """Numeric samples plus hardware identity, kept out of numeric freshness checks."""
+    def __init__(self,*args,cpu_name='',gpus=(),selected_gpu=None,**kwargs):
+        super().__init__(*args,**kwargs)
+        self.cpu_name=cpu_name;self.gpus=tuple(gpus);self.selected_gpu=selected_gpu
+
+@dataclass(frozen=True)
 class Sample:
     value: float | None
     timestamp: float
