@@ -7,6 +7,7 @@ from .typography import RollingText
 from .effects import TemperatureSheen
 from .usage_chart import UsageChart,CPU,GPU
 from .weather import WeatherPanel
+from .robot import RobotAnimator
 
 class Renderer:
     def __init__(self,assets=None,font_choice="born"):
@@ -14,7 +15,7 @@ class Renderer:
         self.background=Image.open(self.assets/'background.png').convert('RGB')
         self.clockfont=ImageFont.truetype(str(self.assets/'clock.otf'),33)
         self.ram_separator=Image.open(self.assets/'ram-separator.png').convert('RGBA')
-        self.robot_poses={p:Image.open(self.assets/f'robot-{p}.png').convert('RGBA') for p in ('left','front','right')}
+        self.robot = RobotAnimator(self.assets)
         self.gauge_mask=Image.open(self.assets/'gauge-mask.png').convert('L')
         self.gauge_colors=Image.new('RGB',self.background.size)
         gd=ImageDraw.Draw(self.gauge_colors)
@@ -106,9 +107,7 @@ class Renderer:
         if len(pts)>1:d.line(pts,fill='#31ffaf',width=4)
         if pts:
             x,y=pts[-1];d.ellipse((x-6,y-6,x+6,y+6),fill='#ffe533')
-        # Discrete genuine views, not rotating the flat image. Fixed base and anchor.
-        phase=now%9.0
-        pose='left' if phase<3.5 or phase>=7.5 else ('front' if phase<4.2 or phase>=6.8 else 'right')
+        # Original-art in-betweens, fixed base and anchor.
         plate=Image.new('RGBA',im.size);pd=ImageDraw.Draw(plate)
         pd.ellipse((904,385,1036,517),fill=(0,24,16,255))
         grid=Image.new('RGBA',(132,132));gg=ImageDraw.Draw(grid)
@@ -117,8 +116,7 @@ class Renderer:
         clip=Image.new('L',(132,132));ImageDraw.Draw(clip).ellipse((0,0,131,131),fill=255)
         plate.paste(grid,(904,385),clip)
         im.paste(plate,(0,0),plate)
-        robot=self.robot_poses[pose]
-        im.paste(robot,(970-robot.width//2,451-robot.height//2),robot)
+        self.robot.draw(im,now)
         self.weather.draw(im,weather,now)
         self.clock(im,wall)
         phase=self.sheen.phase(now)

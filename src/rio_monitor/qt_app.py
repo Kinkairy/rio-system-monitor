@@ -163,7 +163,7 @@ def main():
   bridge.consume()
   try:data=frames.get_nowait();provider.image=QImage(data,480,480,480*3,QImage.Format_RGB888).copy();bridge._frame+=1;bridge.frameChanged.emit()
   except queue.Empty:pass
- timer=QTimer();timer.timeout.connect(tick);timer.start(67)
+ timer=QTimer();timer.timeout.connect(tick);timer.setTimerType(Qt.PreciseTimer);timer.start(33)
  def shutdown():
   stop.set();weather.close()
   if output[0] and not output[0].close():return False
