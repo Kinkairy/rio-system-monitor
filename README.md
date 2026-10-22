@@ -39,10 +39,11 @@ Public CI checks the source boundary and source tests. It does not fetch private
 material or upload executable files, screenshots, previews or other build artifacts.
 Do not attach builds containing private assets to public releases or CI artifacts.
 
-The maintainer-approved material migration rewrote the original three-commit
-public history. The original history is preserved only on the private repository's
-`archive/rio-system-monitor-assets-a219b700` branch. Existing clones must not push
-the old history back into this public repository; obtain a fresh clone instead.
+The maintainer-approved migration rebuilt this public repository with filtered
+source history. The original repository is now private at
+`Kinkairy/rio-system-monitor-private-archive`; the original history is also saved
+on `Kinkairy/usb-round-screen`'s `archive/rio-system-monitor-assets-a219b700` branch.
+Existing clones must not push the old history back here; obtain a fresh clone.
 
 ## Settings and exit
 
