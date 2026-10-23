@@ -9,6 +9,7 @@ def main():
     parser.add_argument('--startup-loop',type=Path,required=True,help='Private fa2f691 color-accent GIF')
     parser.add_argument('--ffmpeg',type=Path,required=True,help='Local FFmpeg 6.1.1 Windows x64 converter; never uploaded')
     parser.add_argument('--music-font',type=Path,help='Private RIOPixel-Regular.ttf for approved music typography')
+    parser.add_argument('--music-art',type=Path,help='Private directory containing approved default-record.png and record-label.png')
     args=parser.parse_args();source=args.source.resolve();target=(ROOT/'assets').resolve()
     manifest=source/'manifest.json';data=json.loads(manifest.read_text(encoding='utf-8-sig'))
     checked=[]
@@ -32,6 +33,13 @@ def main():
         raw=args.music_font.read_bytes();digest=hashlib.sha256(raw).hexdigest()
         if digest!='82ef63f9bb67a52b5daae663bc83e56bd86d2bc062a78223270e82117fe87919':raise ValueError('Music font checksum mismatch')
         checked.append((args.music_font,target/'fonts/RIOPixel-Regular.ttf'));extras.append({'path':'fonts/RIOPixel-Regular.ttf','bytes':len(raw),'sha256':digest})
+    if args.music_art:
+        src=args.music_art/'default-record.png';raw=src.read_bytes();digest=hashlib.sha256(raw).hexdigest()
+        if digest!='259e984b9f93cd57c18a7d47d48ed07853d7b3ca10ece2af60fdfda24f8518e6':raise ValueError('Music art checksum mismatch: default-record.png')
+        checked.append((src,target/'music/default-record.png'));extras.append({'path':'music/default-record.png','bytes':len(raw),'sha256':digest})
+        src=args.music_art/'record-label.png';raw=src.read_bytes();digest=hashlib.sha256(raw).hexdigest()
+        if digest!='c760e31634d5a5bf1c32c184e8b1c6a9d3eb26d4c3f0571220b20402e31641f1':raise ValueError('Music art checksum mismatch: record-label.png')
+        checked.append((src,target/'music/record-label.png'));extras.append({'path':'music/record-label.png','bytes':len(raw),'sha256':digest})
     for src in sorted((ROOT/'docs/third-party/ffmpeg').iterdir()):
         if src.is_file() and (src.suffix=='.txt' or src.name=='COPYING.GPLv3'):
             raw=src.read_bytes();name='media/'+src.name

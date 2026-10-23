@@ -38,13 +38,28 @@ class MusicRenderer:
    if source.width*source.height>16000000:raise ValueError('Oversized cover')
    source=ImageOps.fit(source.convert('RGBA'),(188*S,188*S),method=Image.Resampling.LANCZOS)
   except Exception:
-   source=Image.new('RGBA',(188*S,188*S),'#11291f');d=ImageDraw.Draw(source)
-   for y in range(0,188*S,22*S):d.line((0,y,188*S,y),fill='#23543c',width=S)
-   d.text((94*S,94*S),'RIO',font=self.font(self.pixel,36*S),fill='#eadd3d',anchor='mm')
-  mask=Image.new('L',source.size);ImageDraw.Draw(mask).ellipse((0,0,188*S-1,188*S-1),fill=255);source.putalpha(mask)
+   source=None
+  if source is not None:
+   mask=Image.new('L',source.size);ImageDraw.Draw(mask).ellipse((0,0,188*S-1,188*S-1),fill=255);source.putalpha(mask)
   self.covers[key]=source
   if len(self.covers)>3:self.covers.pop(next(iter(self.covers)))
   return source
+ @lru_cache(maxsize=2)
+ def private_record_art(self,name,size):
+  try:
+   with Image.open(self.assets/'music'/name) as source:
+    if source.width*source.height>16000000:raise ValueError('Oversized artwork')
+    return source.convert('RGBA').resize((size,size),Image.Resampling.LANCZOS)
+  except (OSError,ValueError):
+   # Source-only checkout remains usable; approved RIO art is private.
+   image=Image.new('RGBA',(size,size));draw=ImageDraw.Draw(image)
+   draw.ellipse((0,0,size-1,size-1),fill='#f5dc42' if 'label' in name else '#090c10')
+   if 'label' not in name:
+    for r in range(size//5,size//2-2,4):draw.ellipse((size//2-r,size//2-r,size//2+r,size//2+r),outline='#1a2025')
+    draw.ellipse((size//3,size//3,size*2//3,size*2//3),fill='#f5dc42')
+   r=max(1,round(size*(4/74 if 'label' in name else 4/222)))
+   draw.ellipse((size//2-r,size//2-r,size//2+r,size//2+r),fill='#080c10')
+   return image
  def lyric_lines(self,snapshot,now,zh):
   track=snapshot['track'];position=track.position_at(now)
   if not track.title:return ('等待播放' if zh else 'WAITING','', '', '')
@@ -122,13 +137,18 @@ class MusicRenderer:
   im=Image.new('RGBA',base.size);d=ImageDraw.Draw(im)
   # Offset record leaves a dedicated readable lyric column.
   cx,cy,R=160,246,111
-  d.ellipse(b((cx-R,cy-R,cx+R,cy+R)),fill='#0b131a',outline='#687f7a',width=2*S)
-  for r in range(82,108,4):d.ellipse(b((cx-r,cy-r,cx+r,cy+r)),outline='#2b3e45',width=S)
-  for a,c in [(self.angle,'#5c8c8d'),(self.angle+180,'#756883')]:
-   for r in range(84,108,4):d.arc(b((cx-r,cy-r,cx+r,cy+r)),a,a+28,fill=c,width=S)
-  art=self.cover_for(track).rotate(-self.angle,resample=Image.Resampling.BICUBIC);im.paste(art,((cx-94)*S,(cy-94)*S),art);d=ImageDraw.Draw(im)
-  d.ellipse(b((cx-37,cy-37,cx+37,cy+37)),fill='#ffe438')
-  d.ellipse(b((cx-3,cy-3,cx+3,cy+3)),fill='#061714')
+  cover=self.cover_for(track)
+  if cover is None:
+   art=self.private_record_art('default-record.png',222*S).rotate(-self.angle,resample=Image.Resampling.BICUBIC)
+   im.paste(art,((cx-111)*S,(cy-111)*S),art)
+  else:
+   d.ellipse(b((cx-R,cy-R,cx+R,cy+R)),fill='#0b131a',outline='#687f7a',width=2*S)
+   for r in range(82,108,4):d.ellipse(b((cx-r,cy-r,cx+r,cy+r)),outline='#2b3e45',width=S)
+   for a,c in [(self.angle,'#5c8c8d'),(self.angle+180,'#756883')]:
+    for r in range(84,108,4):d.arc(b((cx-r,cy-r,cx+r,cy+r)),a,a+28,fill=c,width=S)
+   art=cover.rotate(-self.angle,resample=Image.Resampling.BICUBIC);im.paste(art,((cx-94)*S,(cy-94)*S),art);d=ImageDraw.Draw(im)
+   label=self.private_record_art('record-label.png',74*S).rotate(-self.angle,resample=Image.Resampling.BICUBIC)
+   im.paste(label,((cx-37)*S,(cy-37)*S),label)
   moving=Image.new('RGBA',base.size);moving.paste(im,(round(record_dx*S),0))
   clip=Image.new('L',base.size);ImageDraw.Draw(clip).rectangle(b((43,135,435,358)),fill=255)
   from PIL import ImageChops
