@@ -1,0 +1,173 @@
+"""Approved 480px music layout, real values only; UI preview artwork stays private."""
+from PIL import Image,ImageDraw,ImageFont,ImageFilter,ImageOps
+from pathlib import Path
+from functools import lru_cache
+import math,io,os,time
+from ..model import Spring
+from .state import Track,Audio
+from .lyrics import current_lines
+
+S=1
+
+def source_label(app):
+    value=app.lower()
+    for key,name in [('qqmusic','QQ MUSIC'),('cloudmusic','NETEASE'),('spotify','SPOTIFY'),('applemusic','APPLE MUSIC'),('kugou','KUGOU'),('kwmusic','KUWO')]:
+        if key in value:return name
+    return 'MEDIA SESSION' if app else 'RIO MUSIC'
+
+class MusicRenderer:
+ def __init__(self,assets):
+  self.assets=Path(assets);self.columns=[Spring(damping=14) for _ in range(24)];self.level=Spring(damping=14)
+  self.current=Track();self.previous=Track();self.changed=None;self.previous_lines=('','','','');self.last_lines=self.previous_lines;self.last=None;self.angle=0;self.covers={}
+  self.pixel=str(self.assets/'fonts/RIOPixel-Regular.ttf')
+  if not Path(self.pixel).is_file():self.pixel=str(self.assets/'fonts/Born2bSporty.otf')
+  self.chinese=next((str(p) for p in [self.assets/'fonts/NotoSansCJK-Regular.ttc',Path(os.environ.get('WINDIR','C:/Windows'))/'Fonts/msyh.ttc',Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc')] if p.is_file()),self.pixel)
+  path=self.assets/'rio-brand.png'
+  if path.exists():self.badge=Image.open(path).convert('RGBA').crop((8,88,248,168)).resize((96*S,32*S),Image.Resampling.LANCZOS)
+  else:
+   self.badge=Image.new('RGBA',(96*S,32*S),'#eadd3d');ImageDraw.Draw(self.badge).text((10,4),'RIO',font=ImageFont.load_default(size=40),fill='black')
+ @lru_cache(maxsize=32)
+ def font(self,path,size):
+  try:return ImageFont.truetype(path,size)
+  except OSError:return ImageFont.load_default(size=size)
+ def cover_for(self,track):
+  key=(track.key,hash(track.cover))
+  if key in self.covers:return self.covers[key]
+  try:
+   source=Image.open(io.BytesIO(track.cover))
+   if source.width*source.height>16000000:raise ValueError('Oversized cover')
+   source=ImageOps.fit(source.convert('RGBA'),(188*S,188*S),method=Image.Resampling.LANCZOS)
+  except Exception:
+   source=Image.new('RGBA',(188*S,188*S),'#11291f');d=ImageDraw.Draw(source)
+   for y in range(0,188*S,22*S):d.line((0,y,188*S,y),fill='#23543c',width=S)
+   d.text((94*S,94*S),'RIO',font=self.font(self.pixel,36*S),fill='#eadd3d',anchor='mm')
+  mask=Image.new('L',source.size);ImageDraw.Draw(mask).ellipse((0,0,188*S-1,188*S-1),fill=255);source.putalpha(mask)
+  self.covers[key]=source
+  if len(self.covers)>3:self.covers.pop(next(iter(self.covers)))
+  return source
+ def lyric_lines(self,snapshot,now,zh):
+  track=snapshot['track'];position=track.position_at(now)
+  if not track.title:return ('等待播放' if zh else 'WAITING','', '', '')
+  if position is None:return ('暂无时间轴' if zh else 'NO TIMELINE','','','')
+  current,nextline=current_lines(snapshot['rows'],position)
+  if not current and not nextline:
+   status=snapshot['lyric_status']
+   message={'loading':('加载歌词','LOADING'),'instrumental':('纯音乐','INSTRUMENTAL'),'online_off':('未开启在线歌词','LYRICS OFF')}.get(status,('暂无歌词','NO LYRICS'))
+   return (message[0 if zh else 1],'','','')
+  return tuple(self.wrap_text(current,19)+self.wrap_text(nextline,13))
+ @lru_cache(maxsize=128)
+ def wrap_text(self,text,size):
+  parts=[''];font=self.font(self.chinese,size*S)
+  for char in text:
+   if font.getlength(parts[-1]+char)>125*S and parts[-1]:
+    if len(parts)>=2:break
+    parts.append('')
+   parts[-1]+=char
+  return (parts+['',''])[:2]
+ def render(self,snapshot,now=None,language='en'):
+  now=time.monotonic() if now is None else now;zh=language=='zh';dt=min(.1,max(0,now-self.last)) if self.last is not None else 1/30;self.last=now
+  incoming=snapshot['track'];audio=snapshot['audio'].current(now)
+  if incoming.key!=self.current.key:
+   self.previous=self.current;self.previous_lines=self.last_lines;self.current=incoming;self.changed=now if self.previous.title else None
+  else:self.current=incoming
+  elapsed=now-self.changed if self.changed is not None else 100
+  exiting=elapsed<.34;track=self.previous if exiting else self.current
+  lines=self.previous_lines if exiting else self.lyric_lines(snapshot,now,zh)
+  self.last_lines=self.lyric_lines(snapshot,now,zh)
+  if incoming.playing:self.angle=(self.angle+dt*45)%360
+  if exiting:
+   p=max(0,min(1,elapsed/.26));record_dx=-300*p*p
+  else:
+   p=max(0,min(1,(elapsed-.38)/.30));record_dx=-300*(1-p)**3
+  def slide(row=0):
+   if exiting:
+    p=max(0,min(1,(elapsed-row*.04)/.18));return 250*p*p
+   p=max(0,min(1,(elapsed-.38-row*.035)/.24));return 250*(1-p)**3
+  font=self.pixel;cn=self.chinese
+  def short(text,fontpath,size,width):
+   f=self.font(cn if any(ord(ch)>127 for ch in text) else fontpath,size*S)
+   while len(text)>1 and f.getlength(text)>width*S:text=text[:-2]+'…'
+   return text
+  im=Image.new('RGB',(480*S,480*S),'#030708');d=ImageDraw.Draw(im)
+  def b(v):return tuple(round(x*S) for x in v)
+  def line(p,c,w=1):d.line([b(v) for v in p],fill=c,width=w*S)
+  def tx(x,y,s,n,c,fontfile=font,anchor='mm'):d.text(b((x,y)),s,font=self.font(cn if any(ord(ch)>127 for ch in s) else fontfile,n*S),fill=c,anchor=anchor)
+  def rect(v,c):d.rectangle(b(v),fill=c)
+  def poly(v,c):d.polygon([b(p) for p in v],fill=c)
+  d.ellipse(b((6,6,474,474)),fill='#07110f',outline='#344e45',width=2)
+  # Two mirrored gauges share the same beat envelope but distinct colors.
+  energy=self.level.update(audio.level,dt)
+  for side in (0,1):
+   for k in range(19):
+    f=k/18
+    ca,cb=((25,203,241),(129,255,81)) if side==0 else ((172,102,244),(255,161,65))
+    col=tuple(round(v+(w-v)*f) for v,w in zip(ca,cb))
+    if (k+.5)/19>energy:col=tuple(round(v*.19) for v in col)
+    angle=184+k*3.6
+    aa,zz=angle+.45,angle+3.15
+    if side:aa,zz=540-zz,540-aa
+    aa,zz=math.radians(aa),math.radians(zz)
+    poly([(240+r*math.cos(th),240+r*math.sin(th)) for r,th in [(223,aa),(223,zz),(204,zz),(204,aa)]],col)
+  for k in range(64):
+   a=math.radians(k*360/64);r=231
+   line([(240+r*math.cos(a),240+r*math.sin(a)),(240+(r-4)*math.cos(a),240+(r-4)*math.sin(a))],'#34443d')
+  # Compact header; generous spacing separates identity from content.
+  badge=self.badge
+  im.paste(badge,(143*S,58*S),badge);d=ImageDraw.Draw(im)
+  tx(248,74,'MUSIC',17,'#d5e3d9',anchor='lm')
+  for x,c in [(326,'#54d4d3'),(338,'#a880df')]:poly([(x,82),(x+7,70),(x+13,70),(x+6,82)],c)
+  tx(240,108,short(track.title or ('暂无歌曲' if zh else 'NO TRACK'),font,25,310),25,'#ebdf50');tx(240,131,short(track.artist or source_label(track.source),font,10,310),10,'#719c8c')
+  # Draw the record on an independent layer for the track transition.
+  base=im
+  im=Image.new('RGBA',base.size);d=ImageDraw.Draw(im)
+  # Offset record leaves a dedicated readable lyric column.
+  cx,cy,R=160,246,111
+  d.ellipse(b((cx-R,cy-R,cx+R,cy+R)),fill='#0b131a',outline='#687f7a',width=2*S)
+  for r in range(82,108,4):d.ellipse(b((cx-r,cy-r,cx+r,cy+r)),outline='#2b3e45',width=S)
+  for a,c in [(self.angle,'#5c8c8d'),(self.angle+180,'#756883')]:
+   for r in range(84,108,4):d.arc(b((cx-r,cy-r,cx+r,cy+r)),a,a+28,fill=c,width=S)
+  art=self.cover_for(track).rotate(-self.angle,resample=Image.Resampling.BICUBIC);im.paste(art,((cx-94)*S,(cy-94)*S),art);d=ImageDraw.Draw(im)
+  d.ellipse(b((cx-37,cy-37,cx+37,cy+37)),fill='#ffe438')
+  d.ellipse(b((cx-3,cy-3,cx+3,cy+3)),fill='#061714')
+  moving=Image.new('RGBA',base.size);moving.paste(im,(round(record_dx*S),0))
+  clip=Image.new('L',base.size);ImageDraw.Draw(clip).rectangle(b((43,135,435,358)),fill=255)
+  from PIL import ImageChops
+  moving.putalpha(ImageChops.multiply(moving.getchannel('A'),clip));base.paste(moving,(0,0),moving);im=base;d=ImageDraw.Draw(im)
+  # Light connector makes the lyrics and record a single composition.
+  line([(268,180),(282,180),(292,170),(350,170)],'#4da88f',2)
+  rect((279,195,282,285),'#245c4c');rect((279,220,282,251),'#7cebbb')
+  tx(302,194,'LYRICS',9,'#78958d',anchor='lm')
+  base=im;im=Image.new('RGBA',base.size);d=ImageDraw.Draw(im)
+  tx(299+slide(0),226,lines[0],19,'#b9ffcb',cn,'lm')
+  tx(299+slide(1),254,lines[1],23,'#f0e351',cn,'lm')
+  tx(299+slide(2),290,lines[2],13,'#597d70',cn,'lm')
+  tx(299+slide(3),311,lines[3],13,'#597d70',cn,'lm')
+  clip=Image.new('L',base.size);ImageDraw.Draw(clip).rectangle(b((290,205,433,322)),fill=255)
+  im.putalpha(ImageChops.multiply(im.getchannel('A'),clip));base.paste(im,(0,0),im);im=base;d=ImageDraw.Draw(im)
+  for x,c in [(306,'#62d3c7'),(322,'#ad8cda'),(338,'#e2d65b')]:poly([(x,335),(x+5,329),(x+10,329),(x+5,335)],c)
+  # Short wide rhythm stage, independent rectangular lamps, no rainbow perimeter.
+  for x in range(100,382,16):line([(x,361),(x,432)],'#143027')
+  for y in range(363,433,13):line([(100,y),(382,y)],'#143027')
+  palette=[(184,61,255),(77,89,255),(0,190,255),(0,240,200),(75,248,58),(255,232,39),(255,148,27),(255,56,74)]
+  for k in range(24):
+   distance=abs(k-11.5)-.5
+   target=8*audio.bands[min(11,round(distance))]
+   height=max(0,min(8,self.columns[k].update(target,dt)))
+   x=100+k*11.8
+   for j in range(8):
+    y=430-j*9
+    level=max(0,min(1,height-j))
+    # Slight hue offset per column enriches the palette without losing vertical color bands.
+    import colorsys
+    idx=min(7,j*7/max(3,height-1)); lo=int(idx); hi=min(7,lo+1); mix=idx-lo
+    shade=[a+(z-a)*mix for a,z in zip(palette[lo],palette[hi])]
+    hue,sat,val=colorsys.rgb_to_hsv(*(v/255 for v in shade))
+    tone=colorsys.hsv_to_rgb((hue+.008*math.sin(k*.6))%1,sat,val)
+    col=tuple(round(v*255*(.08+.92*level)) for v in tone)
+    rect((x,y-6,x+8,y),col)
+    if level>.65:
+     rim=tuple(round(v+(255-v)*.28) for v in col)
+     rect((x,y-6,x+8,y-5.5),rim)
+   # No traveling white cap; columns rise and settle like the CPU chart.
+  tx(240,451,('AUDIO / LIVE' if audio.status=='ready' else 'AUDIO / N/A'),9,'#88afa0')
+  return im.resize((480,480),Image.Resampling.LANCZOS)

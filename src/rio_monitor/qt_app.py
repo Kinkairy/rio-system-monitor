@@ -17,6 +17,8 @@ from .telemetry import Collector
 from .render_cache import Renderer
 from .temperature_component import TemperatureComponent
 from .storage import DisplaySession,StorageJob
+from .music.controller import Music
+from .music.renderer import MusicRenderer
 
 @lru_cache(maxsize=2)
 def preview_mask(size):
@@ -33,11 +35,12 @@ class Frames(QQuickImageProvider):
 
 class Bridge(QObject):
  changed=Signal();frameChanged=Signal();noticeChanged=Signal();defaultConfirmationChanged=Signal()
- def __init__(self,app,settings,weather,provider,capture=False,monitor=None,storage=None):
+ def __init__(self,app,settings,weather,provider,capture=False,monitor=None,storage=None,music=None):
   super().__init__();self.app=app;self.s=settings;self.weather=weather;self.frames=provider;self.capture=capture;self.win=None;self.tray=None;self._frame=0;self._notice='';self._saved=False;self._results=[];self._status='';self._busy=False;self._city='';self.loc=None;self.mode=settings.weather_mode;self.city=settings.city;self.mail=queue.Queue();self.generation=0;self.visible=True;self.quitting=False;self.shutdown=None
   self._dirty=False;self.save_timer=QTimer(self);self.save_timer.setSingleShot(True);self.save_timer.setInterval(250);self.save_timer.timeout.connect(self.flushSettings)
   self.monitor=monitor or TemperatureComponent(Path(),settings.temperature_monitor,start=False);self.monitor_snapshot=None
   self.storage=storage or StorageJob(DisplaySession(settings.display_mode),Path());self.storage_snapshot=None
+  self.music=music or Music(Path(),start=False);self.music_signature=None
   self._reset_requested=False
   if settings.weather_mode=='manual':
    try:self._city=json.loads(settings.city)['label'].split(',')[0]
@@ -67,6 +70,34 @@ class Bridge(QObject):
  defaultConfirmation=Property(bool,lambda self:self._reset_requested,notify=defaultConfirmationChanged)
  storageDetail=Property(str,lambda self:self.storage.snapshot()['detail'],notify=changed)
  storagePreview=Property(str,lambda self:QUrl.fromLocalFile(self.storage.snapshot()['preview']).toString() if self.storage.snapshot()['preview'] else '',notify=changed)
+ musicEnabled=Property(bool,lambda self:self.s.music_enabled,notify=changed)
+ musicOnline=Property(bool,lambda self:self.s.music_online_lyrics,notify=changed)
+ musicSources=Property('QVariantList',lambda self:[dict(id='',label='自动' if self.s.language=='zh' else 'Auto')]+self.music.snapshot()['sources'],notify=changed)
+ musicSource=Property(str,lambda self:self.s.music_source,notify=changed)
+ def getMusicStatus(self):
+  state=self.music.snapshot();zh=self.s.language=='zh'
+  labels={'off':('Off','关闭'),'ready':('Ready','就绪'),'starting':('Starting','启动中'),'no_session':('No player session','未发现播放器会话'),'media_unavailable':('Media interface unavailable','媒体接口不可用'),'audio_unavailable':('Audio unavailable','音频不可用'),'dependency_missing':('Audio dependency missing','缺少音频组件'),'windows_only':('Windows required','仅支持 Windows'),'loading':('Loading','加载中'),'local':('Local LRC','本地歌词'),'online_off':('Online lyrics off','在线歌词关闭'),'not_found':('No matching lyrics','暂无匹配歌词'),'network_error':('Lyrics connection failed','歌词连接失败'),'no_timed_lyrics':('No timed lyrics','暂无同步歌词'),'insufficient_metadata':('Incomplete song metadata','歌曲信息不完整'),'instrumental':('Instrumental','纯音乐')}
+  return ' / '.join(labels.get(value,(value,value))[1 if zh else 0] for value in (state['status'],state['audio'].status,state['lyric_status']))
+ musicStatus=Property(str,getMusicStatus,notify=changed)
+ @Slot(bool)
+ def setMusicEnabled(self,value):
+  self.applySettings(music_enabled=value)
+  self.music.configure(value,self.s.music_online_lyrics,self.s.music_source)
+ @Slot(bool)
+ def setMusicOnline(self,value):
+  self.applySettings(music_online_lyrics=value)
+  self.music.configure(self.s.music_enabled,value,self.s.music_source)
+ @Slot(str)
+ def setMusicSource(self,value):
+  self.applySettings(music_source=value)
+  self.music.configure(self.s.music_enabled,self.s.music_online_lyrics,value)
+ @Slot()
+ def importMusicLyrics(self):
+  name,_=QFileDialog.getOpenFileName(None,'Import LRC / 导入歌词','','Lyrics (*.lrc)')
+  if name:
+   try:self.music.import_lrc(name)
+   except Exception as exc:self.tell(str(exc))
+ def toggleMusic(self):self.setMusicEnabled(not self.s.music_enabled)
  def getStorageStatus(self):
   labels={'idle':('Video, animated or still image · Up to 3.4 MB','视频、动态图或静态图 · 不超过 3.4 MB'),'prepare':('Preparing preview…','正在转换并生成预览…'),'ready':('Ready · Click Write to replace stored content','已准备好 · 点击写入后替换屏内内容'),'connecting':('Connecting to screen…','正在连接屏幕…'),'erase':('Preparing screen storage… Keep power connected','正在准备屏幕存储… 请保持供电'),'write':('Writing… Keep power connected','正在写入… 请保持供电'),'stored':('Stored · Real-time monitoring paused','写入完成 · 实时监控已暂停'),'live':('Real-time monitoring resumed','已恢复实时监控')}
   snapshot=self.storage.snapshot()
@@ -167,12 +198,13 @@ class Bridge(QObject):
  def updateMenu(self):
   if not self.tray:return
   cn=self.s.language=='zh';menu=QMenu();menu.setStyleSheet('QMenu{background:#1a2024;color:#e5ecef;border:1px solid #354047;padding:6px;}QMenu::item{padding:8px 26px;border-radius:4px;}QMenu::item:selected{background:#354331;}')
-  entries=[('设置' if cn else 'Settings',self.show),('登录后自动启动' if cn else 'Start at login',self.toggleAuto)]
+  entries=[('设置' if cn else 'Settings',self.show),('音乐模式' if cn else 'Music mode',self.toggleMusic),('登录后自动启动' if cn else 'Start at login',self.toggleAuto)]
   if self.s.display_mode=='stored':entries.append(('实时监控' if cn else 'Real-time monitoring',self.resumeMonitor))
   entries.append(('退出' if cn else 'Exit',self.exit))
   for text,fn in entries:
    action=menu.addAction(text);action.triggered.connect(fn)
    if fn==self.toggleAuto:action.setCheckable(True);action.setChecked(self.s.autostart)
+   if fn==self.toggleMusic:action.setCheckable(True);action.setChecked(self.s.music_enabled)
   old=getattr(self,'menu',None);self.menu=menu;self.tray.setContextMenu(menu)
   if old:old.deleteLater()
  @Slot(str)
@@ -201,6 +233,8 @@ class Bridge(QObject):
    except Exception as ex:self.mail.put(('locate',gen,None,str(ex)))
   threading.Thread(target=run,daemon=True).start()
  def consume(self):
+  state=self.music.snapshot();signature=(state['status'],state['audio'].status,state['lyric_status'],repr(state['sources']))
+  if signature!=self.music_signature:self.music_signature=signature;self.changed.emit()
   storage_snapshot=self.storage.snapshot()
   if storage_snapshot!=self.storage_snapshot:
    self.storage_snapshot=storage_snapshot;self.applySettings(display_mode=storage_snapshot['mode']);self.changed.emit()
@@ -237,7 +271,7 @@ def main():
  QQuickStyle.setStyle('Basic')
  app=QApplication(sys.argv);app.setQuitOnLastWindowClosed(False);app.setApplicationName('RIO System Monitor');app.setFont(QFont('Segoe UI',10))
  assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets';app.setWindowIcon(QIcon(str(assets/'rio-icon.ico')))
- settings=Settings(weather_mode='off') if args.ui_capture else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not args.ui_capture);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets,cache_dir=None if args.ui_capture else config_path().parent/'screen-content');bridge=Bridge(app,settings,weather,provider,bool(args.ui_capture),monitor=monitor,storage=storage);engine=QQmlApplicationEngine();engine.addImageProvider('monitor',provider);engine.rootContext().setContextProperty('bridge',bridge);engine.load(QUrl.fromLocalFile(str(assets/'ui/Main.qml')))
+ settings=Settings(weather_mode='off') if args.ui_capture else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not args.ui_capture);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets,cache_dir=None if args.ui_capture else config_path().parent/'screen-content');music=Music(config_path().parent/'lyrics',settings.music_enabled,settings.music_online_lyrics,settings.music_source,start=not args.ui_capture);bridge=Bridge(app,settings,weather,provider,bool(args.ui_capture),monitor=monitor,storage=storage,music=music);engine=QQmlApplicationEngine();engine.addImageProvider('monitor',provider);engine.rootContext().setContextProperty('bridge',bridge);engine.load(QUrl.fromLocalFile(str(assets/'ui/Main.qml')))
  if not engine.rootObjects():raise RuntimeError('Qt Quick main window failed to load')
  bridge.win=engine.rootObjects()[0];bridge.tray=QSystemTrayIcon(app.windowIcon(),app);bridge.tray.setToolTip('RIO System Monitor');bridge.updateMenu();bridge.tray.activated.connect(lambda reason:bridge.show() if reason in (QSystemTrayIcon.Trigger,QSystemTrayIcon.DoubleClick) else None)
  if not args.ui_capture:bridge.tray.show()
@@ -258,11 +292,11 @@ def main():
    if collector:collector.gpu.close()
  collector_worker=threading.Thread(target=collect_loop,daemon=True);collector_worker.start()
  def render_loop():
-  renderer=Renderer()
+  renderer=Renderer();music_renderer=MusicRenderer(assets)
   while not stop.is_set():
    started=time.monotonic()
    if bridge.visible or session.live:
-    frame=renderer.render(latest_samples[0],weather=weather.reading)
+    frame=music_renderer.render(music.snapshot(),language=bridge.s.language) if bridge.s.music_enabled else renderer.render(latest_samples[0],weather=weather.reading)
     render_times.append(time.monotonic()-started);render_count[0]+=1
     session.submit(frame.rotate(-bridge.s.rotation) if bridge.s.rotation else frame)
     if bridge.visible:
@@ -291,6 +325,7 @@ def main():
  def shutdown():
   if not storage.close():return False
   stop.set();weather.close();monitor.close()
+  if not music.close():return False
   if not session.close():return False
   worker.join(2);collector_worker.join(2);return not worker.is_alive() and not collector_worker.is_alive()
  bridge.shutdown=shutdown
@@ -371,3 +406,4 @@ def main():
   QTimer.singleShot(1800,capture_main)
  result=app.exec();shutdown();return result
 if __name__=='__main__':main()
+

@@ -8,6 +8,7 @@ def main():
     parser.add_argument('--source',type=Path,required=True)
     parser.add_argument('--startup-loop',type=Path,required=True,help='Private fa2f691 color-accent GIF')
     parser.add_argument('--ffmpeg',type=Path,required=True,help='Local FFmpeg 6.1.1 Windows x64 converter; never uploaded')
+    parser.add_argument('--music-font',type=Path,help='Private RIOPixel-Regular.ttf for approved music typography')
     args=parser.parse_args();source=args.source.resolve();target=(ROOT/'assets').resolve()
     manifest=source/'manifest.json';data=json.loads(manifest.read_text(encoding='utf-8-sig'))
     checked=[]
@@ -27,6 +28,10 @@ def main():
         raw=src.read_bytes();digest=hashlib.sha256(raw).hexdigest()
         if digest!=expected:raise ValueError('Bundled file checksum mismatch: '+name)
         checked.append((src,target/name));extras.append({'path':name,'bytes':len(raw),'sha256':digest})
+    if args.music_font:
+        raw=args.music_font.read_bytes();digest=hashlib.sha256(raw).hexdigest()
+        if digest!='82ef63f9bb67a52b5daae663bc83e56bd86d2bc062a78223270e82117fe87919':raise ValueError('Music font checksum mismatch')
+        checked.append((args.music_font,target/'fonts/RIOPixel-Regular.ttf'));extras.append({'path':'fonts/RIOPixel-Regular.ttf','bytes':len(raw),'sha256':digest})
     for src in sorted((ROOT/'docs/third-party/ffmpeg').iterdir()):
         if src.is_file() and (src.suffix=='.txt' or src.name=='COPYING.GPLv3'):
             raw=src.read_bytes();name='media/'+src.name
@@ -39,3 +44,4 @@ def main():
     verify(target);print(f'Imported and verified {len(checked)} private assets. These files must remain untracked.')
 
 if __name__=='__main__':main()
+

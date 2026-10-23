@@ -148,6 +148,7 @@ ApplicationWindow {
    background: Rectangle { x: rotationSlider.leftPadding; y: rotationSlider.topPadding+rotationSlider.availableHeight/2-height/2; width: rotationSlider.availableWidth; height: 4; radius: 2; color: rotationSlider.hovered ? "#607451" : "#343d40" }
    handle: Rectangle { x: rotationSlider.leftPadding+rotationSlider.visualPosition*(rotationSlider.availableWidth-width); y: rotationSlider.topPadding+rotationSlider.availableHeight/2-height/2; width: 18; height: 18; radius: 9; color: rotationSlider.pressed || rotationSlider.hovered ? "#d1ff9b" : "#a7eb52"; border.width: rotationSlider.hovered ? 2 : 0; border.color: "#ecffd7" }
   }
+  ActionButton { objectName: "musicSettingsButton"; x: 212; y: 234; width: 184; implicitHeight: 30; text: win.tr("Music mode","音乐模式"); onClicked: musicPopup.open() }
   RioText { x: 24; y: 280; text: win.tr("Weather","天气"); color: "#dce3e6" }
   ActionButton { x: 20; y: 306; width: 332; text: bridge.cityLabel || win.tr("Select city","选择城市"); onClicked: { cityPopup.open(); searchField.forceActiveFocus() } }
   RefreshButton { objectName: "weatherRefreshButton"; x: 362; y: 306; onClicked: consentPopup.open() }
@@ -179,6 +180,33 @@ ApplicationWindow {
    }
   }
   ActionButton { objectName: "saveButton"; x: 310; y: 549; width: 90; height: 34; text: win.tr("Save","保存"); fill: "#a7eb52"; ink: "#17210f"; onClicked: bridge.saveAndHide() }
+ }
+ DialogPopup {
+  id: musicPopup; objectName: "musicPopup"; height: 410
+  ColumnLayout { anchors.fill: parent; spacing: 12
+   RowLayout { Layout.fillWidth: true; RioText { text: win.tr("Music mode","音乐模式"); font.pixelSize: 17; color: "#edf0f2"; Layout.fillWidth: true } CloseButton { onClicked: musicPopup.close() } }
+   RowLayout { Layout.fillWidth: true; RioText { text: win.tr("Enable","启用"); color: "#edf0f2"; Layout.fillWidth: true } RioSwitch { objectName: "musicSwitch"; checked: bridge.musicEnabled; onToggled: bridge.setMusicEnabled(checked) } }
+   RioText { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 11; color: "#a6b7b0"; text: win.tr("Analyzes speaker audio locally. No microphone, recording files or audio uploads. Other apps' sounds may be included.","仅在本机分析输出声音，不使用麦克风，不保存或上传音频；可能包含其他应用声音。") }
+   ComboBox { id: sourceChoice; Layout.fillWidth: true; implicitHeight: 36;
+    background: Rectangle { color: "#11171b"; radius: 7; border.color: "#354047" }
+    contentItem: RioText { text: sourceChoice.displayText; color: "#e5e8e9"; verticalAlignment: Text.AlignVCenter; leftPadding: 10; rightPadding: 24; elide: Text.ElideRight; font.pixelSize: 12 }
+    indicator: RioText { x: sourceChoice.width-22; y: 8; text: "▾"; color: "#a7eb52" }
+    delegate: ItemDelegate { width: sourceChoice.width; contentItem: RioText { text: modelData.label; color: "#e5e8e9"; elide: Text.ElideRight } background: Rectangle { color: highlighted ? "#354331" : "#1a2024" } }
+    popup: Popup { y: sourceChoice.height; width: sourceChoice.width; padding: 2; background: Rectangle { color: "#1a2024"; radius: 6; border.color: "#354047" } contentItem: ListView { implicitHeight: Math.min(contentHeight,160); clip: true; model: sourceChoice.popup.visible ? sourceChoice.delegateModel : null; currentIndex: sourceChoice.highlightedIndex } }
+ model: bridge.musicSources; textRole: "label"; valueRole: "id"; onActivated: bridge.setMusicSource(currentValue); Component.onCompleted: currentIndex=indexOfValue(bridge.musicSource) }
+   RowLayout { Layout.fillWidth: true; RioText { text: win.tr("Online lyrics","在线歌词"); color: "#edf0f2"; Layout.fillWidth: true } RioSwitch { id: lyricsToggle; checked: bridge.musicOnline; onToggled: { if(checked) lyricsConsent.open(); else bridge.setMusicOnline(false) } } }
+   ActionButton { Layout.fillWidth: true; text: win.tr("Import LRC for current song","为当前歌曲导入 LRC"); onClicked: bridge.importMusicLyrics() }
+   RioText { Layout.fillWidth: true; Layout.fillHeight: true; wrapMode: Text.WrapAnywhere; font.pixelSize: 10; color: "#8c9c95"; text: bridge.musicStatus }
+  }
+ }
+ DialogPopup {
+  id: lyricsConsent; height: 242
+  onClosed: lyricsToggle.checked=Qt.binding(function(){return bridge.musicOnline})
+  ColumnLayout { anchors.fill: parent; spacing: 12
+   RioText { text: win.tr("Online lyric matching","在线歌词匹配"); font.pixelSize: 17; color: "#edf0f2" }
+   RioText { Layout.fillWidth: true; Layout.fillHeight: true; wrapMode: Text.WordWrap; font.pixelSize: 12; color: "#b2bdc4"; text: win.tr("Send song title, artist, album and duration to LRCLIB.net to find timed lyrics. Audio and account credentials are never sent. Matches are not guaranteed.","将歌名、歌手、专辑和时长发送给 LRCLIB.net 查询同步歌词，不发送音频和账号凭据，不保证每首歌都有结果。") }
+   ConfirmationActions { onRejected: { bridge.setMusicOnline(false); lyricsConsent.close() } onAccepted: { bridge.setMusicOnline(true); lyricsConsent.close() } }
+  }
  }
  DialogPopup {
   id: storagePopup; objectName: "storagePopup"
@@ -256,3 +284,4 @@ ApplicationWindow {
  }
  Connections { target: bridge; function onNoticeChanged() {if(bridge.notice) notice.open()} }
 }
+

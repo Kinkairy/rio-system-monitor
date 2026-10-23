@@ -29,3 +29,6 @@ and are not distributed here. Font paths above refer to an authorized local asse
 import. A private binary build must retain the original notices with the material.
 The public source's MIT license does not grant any rights to private artwork or
 relicense third-party materials.
+
+
+Music mode adds NumPy (BSD-3-Clause), PyAudioWPatch/PyAudio and PortAudio (MIT), and PyWinRT (MIT). The applicable upstream licenses must accompany redistributed binary bundles. Source references: https://numpy.org/doc/stable/license.html ; https://github.com/s0d3s/PyAudioWPatch/blob/master/LICENSE.txt ; https://github.com/pywinrt/pywinrt . LRCLIB is an optional external service, not bundled code. No LX Music source is copied.
