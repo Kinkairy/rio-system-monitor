@@ -4,7 +4,7 @@ import QtQuick.Layouts
 
 ApplicationWindow {
  id: win
- width: 448; height: 630; visible: true; color: "transparent"
+ width: 448; height: 675; visible: true; color: "transparent"
  flags: Qt.Window | Qt.FramelessWindowHint
  title: "RIO System Monitor"
  property bool zh: bridge.language === "zh"
@@ -125,10 +125,10 @@ ApplicationWindow {
  // A soft shadow inside the same transparent native window. No system frame or second window.
  Repeater {
   model: 12
-  Rectangle { x: 14-index; y: 16-index; width: 420+index*2; height: 600+index*2; radius: 12+index; color: "black"; opacity: (12-index)*0.0024 }
+  Rectangle { x: 14-index; y: 16-index; width: 420+index*2; height: 645+index*2; radius: 12+index; color: "black"; opacity: (12-index)*0.0024 }
  }
  Rectangle {
-  id: panel; x: 14; y: 12; width: 420; height: 602; radius: 12; color: "#111416"
+  id: panel; x: 14; y: 12; width: 420; height: 647; radius: 12; color: "#111416"
   Item {
    x: 0; y: 0; width: parent.width; height: 66
    DragHandler { target: null; onActiveChanged: if(active) win.startSystemMove() }
@@ -149,8 +149,6 @@ ApplicationWindow {
    background: Rectangle { x: rotationSlider.leftPadding; y: rotationSlider.topPadding+rotationSlider.availableHeight/2-height/2; width: rotationSlider.availableWidth; height: 4; radius: 2; color: rotationSlider.hovered ? "#607451" : "#343d40" }
    handle: Rectangle { x: rotationSlider.leftPadding+rotationSlider.visualPosition*(rotationSlider.availableWidth-width); y: rotationSlider.topPadding+rotationSlider.availableHeight/2-height/2; width: 18; height: 18; radius: 9; color: rotationSlider.pressed || rotationSlider.hovered ? "#d1ff9b" : "#a7eb52"; border.width: rotationSlider.hovered ? 2 : 0; border.color: "#ecffd7" }
   }
-  RioText { x: 212; y: 238; text: win.tr("Music appreciation","音乐欣赏模式"); color: "#dce3e6"; font.pixelSize: 13 }
-  RioSwitch { objectName: "musicSwitch"; x: 358; y: 230; checked: bridge.musicEnabled; onToggled: bridge.setMusicEnabled(checked) }
   RioText { x: 24; y: 280; text: win.tr("Weather","天气"); color: "#dce3e6" }
   ActionButton { x: 20; y: 306; width: 332; text: bridge.cityLabel || win.tr("Select city","选择城市"); onClicked: { cityPopup.open(); searchField.forceActiveFocus() } }
   RefreshButton { objectName: "weatherRefreshButton"; x: 362; y: 306; onClicked: consentPopup.open() }
@@ -160,12 +158,14 @@ ApplicationWindow {
   RioText { x: 24; y: 445; text: win.tr("Temperature monitoring","温度监控"); color: "#dce3e6" }
   RioText { x: 24; y: 464; width: 318; text: bridge.monitorStatus; color: "#89979f"; font.pixelSize: 10; elide: Text.ElideRight }
   RioSwitch { objectName: "monitorSwitch"; x: 358; y: 439; checked: bridge.monitorChecked; enabled: !bridge.monitorBusy && !bridge.monitorExternal; onToggled: bridge.setMonitorEnabled(checked) }
-  RioText { x: 24; y: 490; text: win.tr("Start at login","登录后启动"); color: "#dce3e6" }
-  RioSwitch { id: autoSwitch; objectName: "autoSwitch"; x: 358; y: 484; checked: bridge.autostart; onToggled: bridge.setAutostart(checked) }
-  Rectangle { x: 20; y: 530; width: 380; height: 1; color: "#292f32" }
-  EnglishText { x: 24; y: 561; text: "Your system. At a glance."; color: "#899398"; font.pixelSize: 10 }
+  RioText { x: 24; y: 490; text: win.tr("Music appreciation","音乐欣赏模式"); color: "#dce3e6" }
+  RioSwitch { objectName: "musicSwitch"; x: 358; y: 484; checked: bridge.musicEnabled; onToggled: bridge.setMusicEnabled(checked) }
+  RioText { x: 24; y: 535; text: win.tr("Start at login","登录后启动"); color: "#dce3e6" }
+  RioSwitch { id: autoSwitch; objectName: "autoSwitch"; x: 358; y: 529; checked: bridge.autostart; onToggled: bridge.setAutostart(checked) }
+  Rectangle { x: 20; y: 575; width: 380; height: 1; color: "#292f32" }
+  EnglishText { x: 24; y: 606; text: "Your system. At a glance."; color: "#899398"; font.pixelSize: 10 }
   Row {
-   id: temperatureLoading; objectName: "temperatureLoading"; x: (parent.width-width)/2; y: 563; spacing: 7; visible: bridge.monitorBusy || bridge.storageBusy
+   id: temperatureLoading; objectName: "temperatureLoading"; x: (parent.width-width)/2; y: 608; spacing: 7; visible: bridge.monitorBusy || bridge.storageBusy
    Repeater {
     model: 3
     delegate: Rectangle {
@@ -181,7 +181,7 @@ ApplicationWindow {
     }
    }
   }
-  ActionButton { objectName: "saveButton"; x: 310; y: 549; width: 90; height: 34; text: win.tr("Save","保存"); fill: "#a7eb52"; ink: "#17210f"; onClicked: bridge.saveAndHide() }
+  ActionButton { objectName: "saveButton"; x: 310; y: 594; width: 90; height: 34; text: win.tr("Save","保存"); fill: "#a7eb52"; ink: "#17210f"; onClicked: bridge.saveAndHide() }
  }
  DialogPopup {
   id: musicPopup; objectName: "musicPopup"; height: 410
