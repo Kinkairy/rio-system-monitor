@@ -6,7 +6,7 @@ Music mode is a separate live renderer and does not replace monitoring or screen
 
 SMTC supplies title/artist/album, thumbnail, playback state and timeline when published by the selected player. Auto selection keeps the previous playing session to prevent unnecessary switches. An explicit selected session never silently falls back to another app. Timeline missing or stale: do not invent lyric synchronization. Artwork decode is bounded and cached. Empty artwork uses a neutral RIO record, not a fictitious album.
 
-LRCLIB lyric lookup is separately opt-in and sends title, artist, album and duration via HTTPS to lrclib.net/api/get. No accounts, cookies or audio are sent. Exact title/artist and duration checks reject ambiguous mismatches. LRC files can be imported for the current track; stored under the user's config directory keyed by track identity. Late network replies are discarded after track changes, disable, or local imports. No private QQ/NetEase APIs, QRC decryption, third-party executable plugins or music download/playback source are included.
+LRCLIB lyric lookup is separately opt-in and sends title, artist, album and duration via HTTPS to lrclib.net/api/get. No accounts, cookies or audio are sent. Exact title/artist and duration checks reject ambiguous mismatches. LRC files can be imported for the current track; stored under the user's config directory keyed by track identity. Late network replies are discarded after track changes, disable, or local imports. Source-specific QQ/NetEase lyric adapters now run before LRCLIB after renewed consent; see below. No QRC decryption, account access, third-party executable plugins or music download/playback source are included.
 
 ## Rendering
 
@@ -45,3 +45,13 @@ Sources:
 ## Validation boundary
 
 Unit tests exercise silence/stale audio, stereo phase cancellation, LRC parsing/seeking, explicit source selection, opt-in boundaries, local imports, wrong lyric-version rejection, missing art, paused rotation and transitions. Linux offscreen QML validation is not Windows hardware validation. Windows SMTC/loopback, headphone switching, minimized/tray behavior, dependency bundling and USB sustained frame rate still require Windows tests. No new deployment or driver installation is performed by this change.
+
+## Source-specific lyrics (2026-10-23)
+
+Order: explicit locally imported LRC, recognized player's platform, LRCLIB fallback, then no-lyrics state. Known QQMusic.exe / cloudmusic.exe names and supported package-ID patterns are mapped conservatively. Unknown IDs, browsers and LX are not assumed to be QQ or NetEase; use generic fallback. This recognizes a published session, not merely a running process. App identity support is version dependent.
+
+Independent implementation uses QQ unauthenticated search and regular LRC endpoints on c.y.qq.com; NetEase cloudsearch and regular LRC endpoints on music.163.com. These are undocumented platform interfaces, not stable official developer APIs. No LX code, signature algorithm, cookies, credentials, QRC decoder or playback URL resolution is copied. At most 10 candidates, exact normalized title/artist, duration within 3 seconds, album equality when available, and one unambiguous song ID are required. Mismatches and network/schema failures fall back instead of guessing. Query timeout is 4 seconds per platform request; responses capped at 1 MiB; no repeated platform retry loop.
+
+Existing users must re-enable online lyrics after reading the new provider disclosure (consent version 2). Real endpoint probes verify only the tested request/data shape, not every song or installed client. Windows SMTC compatibility still requires local tests.
+
+References: Microsoft SourceAppUserModelId documentation and LX platform adapter architecture: https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssession.sourceappusermodelid and https://github.com/lyswhut/lx-music-desktop/tree/master/src/renderer/utils/musicSdk .
