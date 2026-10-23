@@ -54,4 +54,6 @@ def lookup(track):
     from .platforms import lookup_platform
     rows,status=lookup_platform(track)
     if rows:return rows,status
-    return lookup_lrclib(track)
+    rows,fallback_status=lookup_lrclib(track)
+    if not rows and status=='provider_error' and fallback_status!='instrumental':return (),status
+    return rows,fallback_status

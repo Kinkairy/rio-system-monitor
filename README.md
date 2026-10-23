@@ -6,6 +6,8 @@
 
 当前版本为 **rc0.1**，对应 Git 标签 `rc0.1`。本版包括减少托盘无用绘制、缩小温度环缓存和释放已拆分图集的 CPU/内存优化；结果与验证边界见[性能说明](docs/performance.md)。源码入口支持 `python launch.py --version`，托盘提示显示版本号。
 
+`main` 在该标签之后包含 QQ 歌词查询修正：更换失效的旧搜索入口，并对临时连接失败延迟重试一次；`rc0.1` 标签保留为原有基准。修正与验证记录见[音乐模式说明](docs/music-mode.md#fix-20261023-qq-lyrics-failed-online-lyric-lookup)。
+
 | 位置 | 用途 |
 | --- | --- |
 | `launch.py`、`src/rio_monitor/` | 唯一桌面入口、采集、绘制、音乐与 USB 通信源码 |

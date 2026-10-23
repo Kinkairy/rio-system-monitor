@@ -99,6 +99,7 @@ class MusicRenderer:
   if not current and not nextline:
    status=snapshot['lyric_status']
    message={'loading':('加载歌词','LOADING'),'instrumental':('纯音乐','INSTRUMENTAL'),'online_off':('未开启在线歌词','LYRICS OFF')}.get(status,('暂无歌词','NO LYRICS'))
+   if status in ('network_error','provider_error','lyrics_error'):message=('歌词连接失败','CONNECTION FAILED')
    return ((message[0 if zh else 1],),(),0)
   parts=self.wrap_text(current,19);following=self.wrap_text(nextline,13);progress=0
   index=bisect_right([row.time for row in snapshot['rows']],position)-1

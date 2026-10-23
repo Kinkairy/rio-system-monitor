@@ -73,6 +73,13 @@ class Music:
                 elif online:rows,status=lookup(track)
                 else:rows,status=(),'online_off'
             except Exception:rows,status=(),'lyrics_error'
+            if not rows and online and status in ('network_error','provider_error','lyrics_error'):
+                self.wake.wait(5);self.wake.clear()
+                with self.lock:
+                    retry=not self.stop.is_set() and self.enabled and self.pending is None and generation==self.generation and track.key==self.track.key
+                if retry:
+                    try:rows,status=lookup(track)
+                    except Exception:rows,status=(),'lyrics_error'
             with self.lock:
                 if self.enabled and generation==self.generation and track.key==self.track.key:self.rows,self.lyric_status=rows,status
     def close(self):

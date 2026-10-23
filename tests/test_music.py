@@ -129,6 +129,41 @@ class MusicTests(unittest.TestCase):
    p=Path(tmp)/'input.lrc';p.write_text('[00:01]line',encoding='utf-8');m.import_lrc(p)
    self.assertEqual(m.snapshot()['rows'][0].text,'line')
    m.media_update(Track(title='Other',artist='B'),[],'ready');self.assertEqual(m.snapshot()['rows'],())
+ def test_transient_lyrics_retry_once_but_missing_match_does_not(self):
+  for first,last in (('network_error','ready'),('provider_error','provider_error'),('not_found','not_found')):
+   with self.subTest(first=first,last=last),tempfile.TemporaryDirectory() as tmp:
+    music=Music(tmp,enabled=True,online=True,start=False);music.media_update(Track(title='Song',artist='Artist'),[],'ready')
+    calls=[];expected=1 if first=='not_found' else 2
+    def fetch(track):
+     calls.append(track)
+     if len(calls)==expected:music.stop.set()
+     status=first if len(calls)==1 else last
+     return ((Lyric(0,'line'),) if status=='ready' else ()),status
+    with patch('rio_monitor.music.controller.lookup',side_effect=fetch),patch.object(music.wake,'wait',return_value=False) as wait:
+     music.lyrics_loop()
+    self.assertEqual(len(calls),expected);self.assertEqual(music.lyric_status,last)
+    self.assertEqual(sum(call.args==(5,) for call in wait.call_args_list),expected-1)
+ def test_delayed_lyrics_retry_yields_to_track_change_disable_import_and_stop(self):
+  for action in ('change','disable','import','stop'):
+   with self.subTest(action=action),tempfile.TemporaryDirectory() as tmp:
+    music=Music(tmp,enabled=True,online=True,start=False);music.media_update(Track(title='Old'),[],'ready');calls=[]
+    def fetch(track):
+     calls.append(track.title)
+     if track.title=='New':music.stop.set();return (Lyric(0,'new'),),'ready'
+     return (),'network_error'
+    def wait(seconds):
+     if seconds!=5:return False
+     if action=='change':music.media_update(Track(title='New'),[],'ready')
+     elif action=='disable':music.configure(False,False,'')
+     elif action=='import':
+      path=Path(tmp)/'local.lrc';path.write_text('[00:00]local');music.import_lrc(path)
+     if action!='change':music.stop.set()
+     return True
+    with patch('rio_monitor.music.controller.lookup',side_effect=fetch),patch.object(music.wake,'wait',side_effect=wait):music.lyrics_loop()
+    self.assertEqual(calls,['Old','New'] if action=='change' else ['Old'])
+    if action=='import':self.assertEqual(music.rows,(Lyric(0,'local'),))
+    elif action=='change':self.assertEqual(music.rows,(Lyric(0,'new'),))
+    else:self.assertFalse(music.rows)
  def test_lookup_is_metadata_only_and_rejects_wrong_version(self):
   class Response:
    def __enter__(self):return self
@@ -144,6 +179,7 @@ class MusicTests(unittest.TestCase):
    snapshot=dict(track=Track(),audio=Audio(),rows=(),lyric_status='off')
    self.assertEqual(r.render(snapshot,0).size,(480,480))
    snapshot['track']=Track(title='FIRST',artist='Artist',playing=True,position=1,duration=100,observed=1)
+   snapshot['lyric_status']='provider_error';self.assertEqual(r.lyric_lines(snapshot,1,False)[0],('CONNECTION FAILED',))
    r.render(snapshot,1);angle=r.angle
    snapshot['track']=Track(title='FIRST',artist='Artist',playing=False,position=1,duration=100,observed=1.1)
    r.render(snapshot,1.1);self.assertEqual(r.angle,angle)

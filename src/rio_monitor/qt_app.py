@@ -80,6 +80,7 @@ class Bridge(QObject):
  def getMusicStatus(self):
   state=self.music.snapshot();zh=self.s.language=='zh'
   labels={'off':('Off','关闭'),'ready':('Ready','就绪'),'starting':('Starting','启动中'),'no_session':('No player session','未发现播放器会话'),'media_unavailable':('Media interface unavailable','媒体接口不可用'),'audio_unavailable':('Audio unavailable','音频不可用'),'dependency_missing':('Audio dependency missing','缺少音频组件'),'windows_only':('Windows required','仅支持 Windows'),'loading':('Loading','加载中'),'local':('Local LRC','本地歌词'),'online_off':('Online lyrics off','在线歌词关闭'),'not_found':('No matching lyrics','暂无匹配歌词'),'network_error':('Lyrics connection failed','歌词连接失败'),'no_timed_lyrics':('No timed lyrics','暂无同步歌词'),'insufficient_metadata':('Incomplete song metadata','歌曲信息不完整'),'instrumental':('Instrumental','纯音乐')}
+  labels.update(provider_error=labels['network_error'],lyrics_error=labels['network_error'])
   return ' / '.join(labels.get(value,(value,value))[1 if zh else 0] for value in (state['status'],state['audio'].status,state['lyric_status']))
  musicStatus=Property(str,getMusicStatus,notify=changed)
  @Slot(bool)

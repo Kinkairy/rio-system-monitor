@@ -42,11 +42,13 @@ def match_candidate(track,candidates):
     return next(iter(matches.values())) if len(matches)==1 else None
 
 
-def request_json(url,form=None,referer=None):
+def request_json(url,form=None,referer=None,json_body=None):
     headers={'User-Agent':'RIO-System-Monitor/1.0'}
     if referer:headers['Referer']=referer
     data=None
-    if form is not None:
+    if json_body is not None:
+        data=json.dumps(json_body).encode();headers['Content-Type']='application/json'
+    elif form is not None:
         data=urllib.parse.urlencode(form).encode();headers['Content-Type']='application/x-www-form-urlencoded'
     request=urllib.request.Request(url,data=data,headers=headers)
     with urllib.request.urlopen(request,timeout=4) as response:raw=response.read(1024*1024+1)
@@ -64,13 +66,15 @@ def lookup_platform(track):
     query=track.title+' '+track.artist
     try:
         if player=='qq':
-            data=request_json('https://c.y.qq.com/soso/fcgi-bin/client_search_cp?'+urllib.parse.urlencode(dict(w=query,format='json',p=1,n=10)),referer='https://y.qq.com/')
-            if data.get('code')!=0:return (), 'provider_error'
+            payload={'comm':{'ct':19,'cv':1859,'uin':'0'},'req':{'module':'music.search.SearchCgiService','method':'DoSearchForQQMusicDesktop','param':{'query':query,'num_per_page':10,'page_num':1,'search_type':0}}}
+            data=request_json('https://u.y.qq.com/cgi-bin/musicu.fcg',referer='https://y.qq.com/',json_body=payload)
+            result=data.get('req',{})
+            if data.get('code')!=0 or result.get('code')!=0:return (), 'provider_error'
             candidates=[]
-            for item in data.get('data',{}).get('song',{}).get('list',[])[:10]:
-                ident=str(item.get('songmid',''))
+            for item in result.get('data',{}).get('body',{}).get('song',{}).get('list',[])[:10]:
+                ident=str(item.get('mid',''))
                 if not re.fullmatch('[A-Za-z0-9]{1,64}',ident):continue
-                candidates.append(Candidate(ident,item.get('songname',''),tuple(s.get('name','') for s in item.get('singer',[])),item.get('albumname',''),float(item.get('interval',0))))
+                candidates.append(Candidate(ident,item.get('title') or item.get('name',''),tuple(s.get('name','') for s in item.get('singer',[])),item.get('album',{}).get('name',''),float(item.get('interval',0))))
             matched=match_candidate(track,candidates)
             if not matched:return (), 'not_found'
             data=request_json('https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?'+urllib.parse.urlencode(dict(songmid=matched.ident,format='json',nobase64=1)),referer='https://y.qq.com/')
