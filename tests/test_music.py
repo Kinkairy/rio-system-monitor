@@ -2,12 +2,36 @@ import unittest,tempfile,time,math,io
 from pathlib import Path
 from unittest.mock import patch
 from PIL import Image
-from rio_monitor.music.state import Track,Audio,Spectrum,select_session
+from rio_monitor.music.state import Track,Audio,Spectrum,select_session,AutomaticMusicView
 from rio_monitor.music.lyrics import parse_lrc,current_lines,lookup
 from rio_monitor.music.controller import Music
 from rio_monitor.music.renderer import MusicRenderer
 
 class MusicTests(unittest.TestCase):
+ def test_automatic_view_waits_30_seconds_after_pause_or_stop(self):
+  from dataclasses import replace
+  view=AutomaticMusicView()
+  state=dict(enabled=True,status='ready',track=Track(playing=True,observed=100))
+  paused=dict(state,track=replace(state['track'],playing=False))
+  self.assertFalse(view.select(paused,100))
+  self.assertTrue(view.select(state,101));self.assertTrue(view.select(paused,102))
+  self.assertTrue(view.select(paused,131.99));self.assertFalse(view.select(paused,132))
+  playing=dict(state,track=replace(state['track'],observed=140))
+  self.assertTrue(view.select(playing,140));self.assertTrue(view.select(dict(state,status='no_session'),141))
+  self.assertFalse(view.select(dict(state,status='no_session'),171))
+ def test_playback_resumes_cancel_timeout_and_disabling_returns_immediately(self):
+  view=AutomaticMusicView()
+  def state(playing,observed,enabled=True):return dict(enabled=enabled,status='ready',track=Track(playing=playing,observed=observed))
+  self.assertTrue(view.select(state(True,100),100));self.assertTrue(view.select(state(False,101),101))
+  self.assertTrue(view.select(state(True,125),125));self.assertIsNone(view.idle_since)
+  self.assertTrue(view.select(state(False,126),126));self.assertTrue(view.select(state(False,155),155))
+  self.assertFalse(view.select(state(False,156),156))
+  self.assertTrue(view.select(state(True,160),160));self.assertFalse(view.select(state(True,161,False),161))
+  self.assertFalse(view.select(state(False,162),162))
+ def test_stale_or_unavailable_player_does_not_keep_auto_view_forever(self):
+  view=AutomaticMusicView();state=dict(enabled=True,status='ready',track=Track(playing=True,observed=100))
+  self.assertTrue(view.select(state,100));self.assertTrue(view.select(state,104))
+  self.assertTrue(view.select(state,133.99));self.assertFalse(view.select(state,134))
  def test_timeline_and_stale(self):
   t=Track(title='Song',duration=10,position=2,playing=True,observed=100)
   self.assertEqual(t.position_at(102),4);self.assertIsNone(t.position_at(104))
@@ -81,6 +105,7 @@ class MusicUI(unittest.TestCase):
   engine.load(QUrl.fromLocalFile(str(Path(__file__).resolve().parents[1]/'assets/ui/Main.qml')))
   self.assertTrue(engine.rootObjects());window=engine.rootObjects()[0];bridge.win=window
   self.assertIsNotNone(window.findChild(QObject,'musicPopup'));self.assertIsNotNone(window.findChild(QObject,'musicSwitch'))
+  self.assertTrue(window.findChild(QObject,'musicSwitch').isVisible())
   bridge.setMusicEnabled(True);self.assertTrue(bridge.s.music_enabled)
   bridge.setMusicEnabled(False);self.assertFalse(bridge.music.enabled)
   bridge.save_timer.stop();bridge.storage.close();

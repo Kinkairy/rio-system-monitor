@@ -57,3 +57,17 @@ def select_session(items,preferred='',previous=''):
             or next((x for x in items if x[1]),None)
             or next((x for x in items if x[0]==previous),None)
             or (items[0] if items else None))
+
+class AutomaticMusicView:
+    """Enter on playback; return after 30 continuous paused/stopped seconds."""
+    def __init__(self):self.active=False;self.idle_since=None
+    def select(self,snapshot,now):
+        if not snapshot['enabled']:
+            self.active=False;self.idle_since=None;return False
+        track=snapshot['track']
+        playing=(snapshot['status']=='ready' and track.playing and 0<=now-track.observed<=3)
+        if playing:self.active=True;self.idle_since=None
+        elif self.active:
+            if self.idle_since is None:self.idle_since=now
+            if now-self.idle_since>=30:self.active=False
+        return self.active

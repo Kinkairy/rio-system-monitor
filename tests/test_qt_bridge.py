@@ -3,7 +3,7 @@ from unittest.mock import patch,Mock
 from PIL import Image
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 try:
- from PySide6.QtWidgets import QApplication
+ from PySide6.QtWidgets import QApplication,QSystemTrayIcon
  from PySide6.QtTest import QTest
  from rio_monitor.qt_app import Bridge,Frames,preview_bytes
  from rio_monitor.settings import Settings
@@ -60,6 +60,12 @@ class BridgeTests(unittest.TestCase):
  def test_unavailable_tray_stays_recoverable(self):
   # In production a missing tray must not hide the only recoverable UI.
   self.b.capture=False;self.b.hideWindow();self.assertIn('System tray unavailable',self.b.notice)
+ def test_tray_right_click_opens_menu_and_left_click_opens_settings(self):
+  self.b.menu=Mock();self.b.win=Mock()
+  self.b.trayActivated(QSystemTrayIcon.Context)
+  self.b.menu.popup.assert_called_once();self.b.menu.activateWindow.assert_called_once()
+  self.b.win.show.assert_not_called()
+  self.b.trayActivated(QSystemTrayIcon.Trigger);self.b.win.show.assert_called_once()
  def test_reset_requires_pending_request_and_acceptance(self):
   from pathlib import Path
   from tempfile import TemporaryDirectory

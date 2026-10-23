@@ -6,7 +6,7 @@ from dataclasses import replace
 from functools import lru_cache
 from PIL import Image,ImageDraw
 from PySide6.QtCore import QObject,Signal,Slot,Property,QTimer,QUrl,Qt,QMetaObject
-from PySide6.QtGui import QIcon,QImage,QAction,QFont
+from PySide6.QtGui import QIcon,QImage,QAction,QFont,QCursor
 from PySide6.QtWidgets import QApplication,QSystemTrayIcon,QMenu,QFileDialog
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
@@ -19,6 +19,7 @@ from .temperature_component import TemperatureComponent
 from .storage import DisplaySession,StorageJob
 from .music.controller import Music
 from .music.renderer import MusicRenderer
+from .music.state import AutomaticMusicView
 
 @lru_cache(maxsize=2)
 def preview_mask(size):
@@ -195,17 +196,21 @@ class Bridge(QObject):
   self.app.quit()
  def toggleAuto(self):
   self.setAutostart(not self.s.autostart)
+ def trayActivated(self,reason):
+  if reason==QSystemTrayIcon.Context:
+   menu=getattr(self,'menu',None)
+   if menu:menu.popup(QCursor.pos());menu.activateWindow()
+  elif reason in (QSystemTrayIcon.Trigger,QSystemTrayIcon.DoubleClick):self.show()
  def updateMenu(self):
   if not self.tray:return
   cn=self.s.language=='zh';menu=QMenu();menu.setStyleSheet('QMenu{background:#1a2024;color:#e5ecef;border:1px solid #354047;padding:6px;}QMenu::item{padding:8px 26px;border-radius:4px;}QMenu::item:selected{background:#354331;}')
-  entries=[('设置' if cn else 'Settings',self.show),('音乐模式' if cn else 'Music mode',self.toggleMusic),('登录后自动启动' if cn else 'Start at login',self.toggleAuto)]
-  if self.s.display_mode=='stored':entries.append(('实时监控' if cn else 'Real-time monitoring',self.resumeMonitor))
-  entries.append(('退出' if cn else 'Exit',self.exit))
+  entries=[('退出' if cn else 'Exit',self.exit),('设置' if cn else 'Settings',self.show),('登录后启动' if cn else 'Start at login',self.toggleAuto)]
   for text,fn in entries:
    action=menu.addAction(text);action.triggered.connect(fn)
    if fn==self.toggleAuto:action.setCheckable(True);action.setChecked(self.s.autostart)
    if fn==self.toggleMusic:action.setCheckable(True);action.setChecked(self.s.music_enabled)
-  old=getattr(self,'menu',None);self.menu=menu;self.tray.setContextMenu(menu)
+  # One explicit right-click path avoids depending on the platform's popup handling.
+  old=getattr(self,'menu',None);self.menu=menu;self.tray.setContextMenu(None)
   if old:old.deleteLater()
  @Slot(str)
  def searchCities(self,name):
@@ -273,14 +278,14 @@ def main():
  assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets';app.setWindowIcon(QIcon(str(assets/'rio-icon.ico')))
  settings=Settings(weather_mode='off') if args.ui_capture else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not args.ui_capture);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets,cache_dir=None if args.ui_capture else config_path().parent/'screen-content');music=Music(config_path().parent/'lyrics',settings.music_enabled,settings.music_online_lyrics,settings.music_source,start=not args.ui_capture);bridge=Bridge(app,settings,weather,provider,bool(args.ui_capture),monitor=monitor,storage=storage,music=music);engine=QQmlApplicationEngine();engine.addImageProvider('monitor',provider);engine.rootContext().setContextProperty('bridge',bridge);engine.load(QUrl.fromLocalFile(str(assets/'ui/Main.qml')))
  if not engine.rootObjects():raise RuntimeError('Qt Quick main window failed to load')
- bridge.win=engine.rootObjects()[0];bridge.tray=QSystemTrayIcon(app.windowIcon(),app);bridge.tray.setToolTip('RIO System Monitor');bridge.updateMenu();bridge.tray.activated.connect(lambda reason:bridge.show() if reason in (QSystemTrayIcon.Trigger,QSystemTrayIcon.DoubleClick) else None)
+ bridge.win=engine.rootObjects()[0];bridge.tray=QSystemTrayIcon(app.windowIcon(),app);bridge.tray.setToolTip('RIO System Monitor');bridge.updateMenu();bridge.tray.activated.connect(bridge.trayActivated)
  if not args.ui_capture:bridge.tray.show()
  if not args.ui_capture and not (args.show_settings or args.show_content):QTimer.singleShot(0,bridge.hideWindow)
  if args.show_content:
   def show_content():
    storage.prepare(assets/'default-screen.gif');bridge.win.findChild(QObject,'storagePopup').setProperty('visible',True)
   QTimer.singleShot(150,show_content)
- frames=queue.Queue(maxsize=1);stop=threading.Event();reported_error=[None];render_times=deque(maxlen=300);render_count=[0];run_started=time.monotonic();latest_samples=[{}];sensor_errors=queue.Queue()
+ frames=queue.Queue(maxsize=1);stop=threading.Event();reported_error=[None];render_times=deque(maxlen=300);render_count=[0];run_started=time.monotonic();latest_samples=[{}];sensor_errors=queue.Queue();active_view=['monitor']
  def collect_loop():
   collector=None
   try:
@@ -292,11 +297,13 @@ def main():
    if collector:collector.gpu.close()
  collector_worker=threading.Thread(target=collect_loop,daemon=True);collector_worker.start()
  def render_loop():
-  renderer=Renderer();music_renderer=MusicRenderer(assets)
+  renderer=Renderer();music_renderer=MusicRenderer(assets);music_view=AutomaticMusicView()
   while not stop.is_set():
    started=time.monotonic()
    if bridge.visible or session.live:
-    frame=music_renderer.render(music.snapshot(),language=bridge.s.language) if bridge.s.music_enabled else renderer.render(latest_samples[0],weather=weather.reading)
+    music_state=music.snapshot()
+    show_music=music_view.select(music_state,started);active_view[0]='music' if show_music else 'monitor'
+    frame=music_renderer.render(music_state,language=bridge.s.language) if show_music else renderer.render(latest_samples[0],weather=weather.reading)
     render_times.append(time.monotonic()-started);render_count[0]+=1
     session.submit(frame.rotate(-bridge.s.rotation) if bridge.s.rotation else frame)
     if bridge.visible:
@@ -317,7 +324,8 @@ def main():
  def performance_report():
   if not args.performance_report:return
   durations=list(render_times);elapsed=time.monotonic()-run_started
-  report=dict(seconds=round(elapsed,3),target_render_fps=bridge.s.fps,rendered_frames=render_count[0],render_mean_ms=round(statistics.mean(durations)*1000,3) if durations else None,**session.snapshot(),temperature=monitor.snapshot(),storage=storage.snapshot())
+  music_state=music.snapshot();track=music_state['track'];audio=music_state['audio'].current(time.monotonic())
+  report=dict(seconds=round(elapsed,3),target_render_fps=bridge.s.fps,rendered_frames=render_count[0],render_mean_ms=round(statistics.mean(durations)*1000,3) if durations else None,**session.snapshot(),temperature=monitor.snapshot(),storage=storage.snapshot(),view=active_view[0],music=dict(enabled=music_state['enabled'],status=music_state['status'],playing=track.playing,has_title=bool(track.title),session_count=len(music_state['sources']),audio_status=audio.status,audio_level=round(audio.level,3)))
   try:args.performance_report.write_text(json.dumps(report,indent=2),encoding='utf-8')
   except OSError:pass
  report_timer=QTimer();report_timer.timeout.connect(performance_report)
@@ -377,10 +385,12 @@ def main():
     proof['existing_sensor_toggle_disabled']=not bridge.win.findChild(QObject,'monitorSwitch').property('enabled')
     bridge.monitor.external=False;bridge.changed.emit()
     bridge.win.findChild(QObject,'storagePopup').setProperty('visible',False)
-    bridge.tray.show();bridge.setLanguage('zh');proof['chinese_menu']=[a.text() for a in bridge.menu.actions()]==['设置','登录后自动启动','退出']
+    bridge.tray.show();bridge.setLanguage('zh');proof['chinese_menu']=[a.text() for a in bridge.menu.actions()]==['退出','设置','登录后启动']
+    bridge.tray.activated.emit(QSystemTrayIcon.Context);QApplication.processEvents();proof['tray_right_click_popup_visible']=bridge.menu.isVisible()
+    bridge.menu.grab().save(str(args.ui_capture/'qt-tray-menu-zh.png'));bridge.menu.hide()
     bridge.toggleAuto();proof['autostart_sync']=bridge.s.autostart and any(a.isCheckable() and a.isChecked() for a in bridge.menu.actions())
     bridge.win.findChild(QObject,'cityPopup').setProperty('visible',False);QMetaObject.invokeMethod(bridge.win.findChild(QObject,'saveButton'),'clicked');proof['save_hides_to_tray']=not bridge.win.isVisible() and bridge.tray.isVisible();bridge.show();proof['restore']=bridge.win.isVisible()
-    bridge.setLanguage('en');proof['english_menu']=[a.text() for a in bridge.menu.actions()]==['Settings','Start at login','Exit']
+    bridge.setLanguage('en');proof['english_menu']=[a.text() for a in bridge.menu.actions()]==['Exit','Settings','Start at login']
     assert all(v for k,v in proof.items() if k not in ('content_width','outer_width')),proof
     (args.ui_capture/'qt-proof.json').write_text(json.dumps(proof,indent=2))
    bridge.requestRestoreDefault();QTimer.singleShot(150,capture_reset)
