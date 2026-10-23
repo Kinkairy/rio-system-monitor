@@ -74,7 +74,10 @@ def lookup_platform(track):
             for item in result.get('data',{}).get('body',{}).get('song',{}).get('list',[])[:10]:
                 ident=str(item.get('mid',''))
                 if not re.fullmatch('[A-Za-z0-9]{1,64}',ident):continue
-                candidates.append(Candidate(ident,item.get('title') or item.get('name',''),tuple(s.get('name','') for s in item.get('singer',[])),item.get('album',{}).get('name',''),float(item.get('interval',0))))
+                # QQ publishes display aliases in SMTC, but also supplies the raw names.
+                for field in ('name','title'):
+                    artists=tuple(s.get(field) or s.get('name','') for s in item.get('singer',[]))
+                    candidates.append(Candidate(ident,item.get('title') or item.get('name',''),artists,item.get('album',{}).get('name',''),float(item.get('interval',0))))
             matched=match_candidate(track,candidates)
             if not matched:return (), 'not_found'
             data=request_json('https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?'+urllib.parse.urlencode(dict(songmid=matched.ident,format='json',nobase64=1)),referer='https://y.qq.com/')

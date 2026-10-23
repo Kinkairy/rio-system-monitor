@@ -20,15 +20,17 @@ class PlatformLyricsTests(unittest.TestCase):
    self.assertIsNone(match_candidate(self.track(),[c]))
   self.assertIsNone(match_candidate(self.track(),[good,Candidate('2','Song',('Artist',),'Album',100)]))
  def test_qq_success(self):
+  from dataclasses import replace
   search={'code':0,'req':{'code':0,'data':{'body':{'song':{'list':[
-   {'mid':'wrongversion','title':'Song','singer':[{'name':'Artist'}],'album':{'name':'Album'},'interval':130},
-   {'mid':'abc123','title':'Song','singer':[{'name':'Artist'}],'album':{'name':'Album'},'interval':100}
+   {'mid':'wrongversion','title':'Song','singer':[{'name':'Utada','title':'Utada (宇多田光)'}],'album':{'name':'Album'},'interval':130},
+   {'mid':'abc123','title':'Song','singer':[{'name':'Utada','title':'Utada (宇多田光)'}],'album':{'name':'Album'},'interval':100}
   ]}}}}}
-  with patch('rio_monitor.music.platforms.request_json',side_effect=[search,{'code':0,'lyric':'[00:01]test'}]) as request:
-   rows,status=lookup_platform(self.track());self.assertEqual(status,'ready');self.assertEqual(rows[0].time,1);self.assertEqual(request.call_count,2)
-   url=urllib.parse.urlsplit(request.call_args_list[0].args[0]);self.assertEqual(url.netloc,'u.y.qq.com')
-   payload=request.call_args_list[0].kwargs['json_body'];self.assertEqual(payload['req']['param']['query'],'Song Artist')
-   self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlsplit(request.call_args_list[1].args[0]).query)['songmid'],['abc123'])
+  for artist in ('Utada','Utada (宇多田光)'):
+   with self.subTest(artist=artist),patch('rio_monitor.music.platforms.request_json',side_effect=[search,{'code':0,'lyric':'[00:01]test'}]) as request:
+    rows,status=lookup_platform(replace(self.track(),artist=artist));self.assertEqual(status,'ready');self.assertEqual(rows[0].time,1);self.assertEqual(request.call_count,2)
+    url=urllib.parse.urlsplit(request.call_args_list[0].args[0]);self.assertEqual(url.netloc,'u.y.qq.com')
+    payload=request.call_args_list[0].kwargs['json_body'];self.assertEqual(payload['req']['param']['query'],'Song '+artist)
+    self.assertEqual(urllib.parse.parse_qs(urllib.parse.urlsplit(request.call_args_list[1].args[0]).query)['songmid'],['abc123'])
  def test_netease_success(self):
   search={'code':200,'result':{'songs':[{'id':1,'name':'Song','ar':[{'name':'Artist'}],'al':{'name':'Album'},'dt':100000}]}}
   with patch('rio_monitor.music.platforms.request_json',side_effect=[search,{'code':200,'lrc':{'lyric':'[00:01]test'}}]) as request:

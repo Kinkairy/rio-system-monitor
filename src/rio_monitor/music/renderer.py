@@ -54,13 +54,13 @@ class MusicRenderer:
  def draw_title(self,image,text,now):
   if text!=self.title_key:self.title_key=text;self.title_since=now
   fontpath=self.chinese if any(ord(ch)>127 for ch in text) else self.pixel
-  strip=self.title_strip(text,fontpath);viewport=310*S
+  strip=self.title_strip(text,fontpath);viewport=240*S
   if strip.width<=viewport:
    image.paste(strip,((image.width-strip.width)//2,89*S),strip)
   else:
    offset=round(marquee_offset(strip.width,viewport,now-self.title_since,speed=32*S))
    visible=strip.crop((offset,0,offset+viewport,strip.height))
-   image.paste(visible,(85*S,89*S),visible)
+   image.paste(visible,((image.width-viewport)//2,89*S),visible)
  def cover_for(self,track):
   key=(track.key,hash(track.cover))
   if key in self.covers:return self.covers[key]

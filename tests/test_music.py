@@ -68,9 +68,9 @@ class MusicTests(unittest.TestCase):
     frame=Image.new('RGB',(480,480),'black');renderer.draw_title(frame,title,now);return frame
    first=draw(100);moving=draw(102)
    width=renderer.title_strip(title,renderer.pixel).width
-   returned=draw(100+2*(max(0,width-310)/32+1))
+   returned=draw(100+2*(max(0,width-240)/32+1))
    self.assertNotEqual(first.tobytes(),moving.tobytes());self.assertEqual(first.tobytes(),returned.tobytes())
-   self.assertIsNone(moving.crop((0,0,85,480)).getbbox());self.assertIsNone(moving.crop((395,0,480,480)).getbbox())
+   self.assertIsNone(moving.crop((0,0,120,480)).getbbox());self.assertIsNone(moving.crop((360,0,480,480)).getbbox())
  def test_automatic_view_waits_30_seconds_after_pause_or_stop(self):
   from dataclasses import replace
   view=AutomaticMusicView()
