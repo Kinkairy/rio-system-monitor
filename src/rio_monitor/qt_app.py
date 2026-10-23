@@ -327,7 +327,7 @@ def main():
   if not args.performance_report:return
   durations=list(render_times);elapsed=time.monotonic()-run_started
   music_state=music.snapshot();track=music_state['track'];audio=music_state['audio'].current(time.monotonic())
-  report=dict(seconds=round(elapsed,3),target_render_fps=bridge.s.fps,rendered_frames=render_count[0],render_mean_ms=round(statistics.mean(durations)*1000,3) if durations else None,**session.snapshot(),temperature=monitor.snapshot(),storage=storage.snapshot(),view=active_view[0],music=dict(enabled=music_state['enabled'],status=music_state['status'],playing=track.playing,has_title=bool(track.title),has_cover=bool(track.cover),cover_bytes=len(track.cover),session_count=len(music_state['sources']),audio_status=audio.status,audio_level=round(audio.level,3)))
+  report=dict(seconds=round(elapsed,3),target_render_fps=bridge.s.fps,rendered_frames=render_count[0],render_mean_ms=round(statistics.mean(durations)*1000,3) if durations else None,**session.snapshot(),temperature=monitor.snapshot(),storage=storage.snapshot(),view=active_view[0],music=dict(enabled=music_state['enabled'],status=music_state['status'],playing=track.playing,has_title=bool(track.title),has_cover=bool(track.cover),cover_bytes=len(track.cover),lyric_status=music_state['lyric_status'],lyric_rows=len(music_state['rows']),session_count=len(music_state['sources']),audio_status=audio.status,audio_level=round(audio.level,3)))
   try:args.performance_report.write_text(json.dumps(report,indent=2),encoding='utf-8')
   except OSError:pass
  report_timer=QTimer();report_timer.timeout.connect(performance_report)

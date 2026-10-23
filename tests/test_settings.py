@@ -3,6 +3,12 @@ from unittest.mock import patch
 from pathlib import Path
 from rio_monitor.settings import Settings,save,load,config_path
 class SettingTests(unittest.TestCase):
+ def test_online_lyrics_default_on_but_music_requires_enabled_switch(self):
+  with tempfile.TemporaryDirectory() as d,patch.dict(os.environ,{'LOCALAPPDATA':d}):
+   self.assertTrue(load().music_online_lyrics);self.assertEqual(load().music_lyrics_consent,2)
+   self.assertFalse(load().music_enabled)
+   save(Settings(music_online_lyrics=False,music_lyrics_consent=0))
+   self.assertFalse(load().music_online_lyrics)
  def test_roundtrip(self):
   with tempfile.TemporaryDirectory() as d,patch.dict(os.environ,{'LOCALAPPDATA':d}):
    s=Settings(20,90,'auto','',True,False);save(s);self.assertEqual(s,load())
