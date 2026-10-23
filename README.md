@@ -123,12 +123,12 @@ AUTOUPDATE-20261023-LIVE 追加（实现前）：用户报告开启登录启动�
 
 唯一受支持的桌面入口为 `python launch.py`（内部调用 `rio_monitor.qt_app.main`）。旧 Tkinter 设置界面及旧单卡 NVIDIA 采集模块已移除；当前 GPU 数据继续走 `sensors.py` / `windows_gpu.py`。源码截图仍可通过 `python launch.py --snapshot <file.png> --demo` 生成，需先导入私有素材。
 
-公开仓库只包含源码和文档。图像、atlas、字体、图标、动画数据和默认 GIF 保存在私有 `Kinkairy/usb-round-screen`；公开仓库不提供这些素材的许可。原公开仓库已改名私有归档为 `Kinkairy/rio-system-monitor-private-archive`，完整原历史另存于私有仓库的 `archive/rio-system-monitor-assets-a219b700`。旧克隆请勿把含素材的历史重新推送回来。
+公开仓库只包含源码和文档。完整私有工程已归入 `Kinkairy/rio-system` 的 `RoundScreen/`：当前源码在 `monitor/`，原图、atlas、字体、图标、动画及默认 GIF 的来源在 `monitor-assets/` 和 `artwork/`；公开仓库不提供这些素材的许可。原 `Kinkairy/usb-round-screen` 和 `Kinkairy/rio-system-monitor-private-archive` 保留来源历史，含素材的原历史仍可由 `archive/rio-system-monitor-assets-a219b700` 恢复。旧克隆请勿把含素材的历史重新推送回来。
 
 Windows 本地构建使用 Python 3.12，需要访问私有素材并自行提供本地转换器：
 
 ```text
-python tools/import_private_assets.py --source "<private-repo>/monitor-assets" --startup-loop "<private-repo>/artwork/startup-loop/RIO-System-Monitor-color-accent-loop.gif" --music-font "<private-repo>/artwork/music-mode/fonts/RIOPixel-Regular.ttf" --music-art "<private-repo>/artwork/music-mode" --ffmpeg "<local-FFmpeg-6.1.1>/ffmpeg.exe"
+python tools/import_private_assets.py --source "<rio-system>/RoundScreen/monitor-assets" --startup-loop "<rio-system>/RoundScreen/artwork/startup-loop/RIO-System-Monitor-color-accent-loop.gif" --music-font "<rio-system>/RoundScreen/artwork/music-mode/fonts/RIOPixel-Regular.ttf" --music-art "<rio-system>/RoundScreen/artwork/music-mode" --ffmpeg "<local-FFmpeg-6.1.1>/ffmpeg.exe"
 Build-Windows.cmd
 ```
 
