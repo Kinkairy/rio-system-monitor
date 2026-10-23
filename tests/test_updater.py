@@ -70,7 +70,7 @@ class UpdateTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp)/'更新 test';root.mkdir();target=root/'RIO.exe';target.write_bytes(b'old program')
    staged=root/'new.exe';source=root/'restart.cs'
-   source.write_text('using System; using System.IO; class Restart { static void Main(string[] args) { File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"restarted.txt"),string.Join(" ",args)); } }',encoding='utf-8')
+   source.write_text('using System; using System.IO; class Restart { static void Main(string[] args) { File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"restarted.txt"),string.Join(" ",args)+"|"+Environment.GetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT")); } }',encoding='utf-8')
    compiler=Path(os.environ['SYSTEMROOT'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
    subprocess.run([str(compiler),'/nologo','/target:winexe','/out:'+str(staged),str(source)],check=True,capture_output=True,creationflags=subprocess.CREATE_NO_WINDOW)
    content=staged.read_bytes()
@@ -84,7 +84,7 @@ class UpdateTests(unittest.TestCase):
     self.assertEqual(json.loads((root/'updates/status.json').read_text(encoding='utf-8-sig'))['status'],'installed')
     receipt=root/'restarted.txt';deadline=time.monotonic()+5
     while not receipt.exists() and time.monotonic()<deadline:time.sleep(.05)
-    self.assertEqual(receipt.read_text(),'--show-settings')
+    self.assertEqual(receipt.read_text(),'--show-settings|1')
    finally:
     if child.poll() is None:child.terminate();child.wait(5)
     if helper and helper.poll() is None:helper.terminate();helper.wait(5)

@@ -74,6 +74,7 @@ try {
     Copy-Item -LiteralPath $staged -Destination $replacement -Force
     [IO.File]::Replace($replacement,$target,[NullString]::Value)
     Remove-Item -LiteralPath $staged -Force
+    $env:PYINSTALLER_RESET_ENVIRONMENT='1'
     Start-Process -FilePath $target -ArgumentList '--show-settings' -WindowStyle Hidden
     @{status='installed';version=$data.version} | ConvertTo-Json | Set-Content -LiteralPath $data.status_path -Encoding UTF8
 } catch {
