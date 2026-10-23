@@ -17,6 +17,7 @@ class Settings:
     music_enabled: bool = False
     music_online_lyrics: bool = False
     music_source: str = ''
+    music_lyrics_consent: int = 0
 
 def config_path():
     return Path(os.environ.get('LOCALAPPDATA',Path.home()/'.config'))/'RIO-Monitor'/'settings.json'
@@ -29,6 +30,7 @@ def load():
         if s.language not in ('en','zh') or not isinstance(s.city,str) or not isinstance(s.start_hidden,bool) or not isinstance(s.autostart,bool) or not isinstance(s.temperature_monitor,bool):raise ValueError('Invalid settings')
         if s.display_mode not in ('monitor','stored'):raise ValueError('Invalid display mode')
         if not isinstance(s.music_enabled,bool) or not isinstance(s.music_online_lyrics,bool) or not isinstance(s.music_source,str):raise ValueError('Invalid music settings')
+        if s.music_lyrics_consent != 2:s.music_online_lyrics=False  # Expanded providers need fresh consent.
         s.start_hidden=True
         s.display_mode='monitor'  # Each program launch reconnects the live display.
         return s

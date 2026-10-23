@@ -85,7 +85,7 @@ class Bridge(QObject):
   self.music.configure(value,self.s.music_online_lyrics,self.s.music_source)
  @Slot(bool)
  def setMusicOnline(self,value):
-  self.applySettings(music_online_lyrics=value)
+  self.applySettings(music_online_lyrics=value,music_lyrics_consent=2 if value else 0)
   self.music.configure(self.s.music_enabled,value,self.s.music_source)
  @Slot(str)
  def setMusicSource(self,value):

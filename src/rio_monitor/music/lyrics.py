@@ -1,4 +1,4 @@
-"""LRC parsing and optional LRCLIB lookup. No account tokens or private APIs."""
+"""LRC parsing, source-specific matching and optional LRCLIB fallback. No account tokens."""
 from dataclasses import dataclass
 from bisect import bisect_right
 import re,json,urllib.parse,urllib.request,urllib.error
@@ -29,7 +29,7 @@ def current_lines(rows,position):
     if index<0:return ('',rows[0].text)
     return rows[index].text,rows[index+1].text if index+1<len(rows) else ''
 
-def lookup(track):
+def lookup_lrclib(track):
     # Exact GET matching only: title/artist/album/duration sent after opt-in.
     if not track.title or not track.artist or track.duration<=0:return (), 'insufficient_metadata'
     args=dict(track_name=track.title,artist_name=track.artist,album_name=track.album,duration=round(track.duration))
@@ -48,3 +48,10 @@ def lookup(track):
     except urllib.error.HTTPError as exc:
         return ((),'not_found') if exc.code==404 else ((),'network_error')
     except Exception:return (), 'network_error'
+
+
+def lookup(track):
+    from .platforms import lookup_platform
+    rows,status=lookup_platform(track)
+    if rows:return rows,status
+    return lookup_lrclib(track)

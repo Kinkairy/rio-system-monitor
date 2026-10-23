@@ -200,11 +200,11 @@ ApplicationWindow {
   }
  }
  DialogPopup {
-  id: lyricsConsent; height: 242
+  id: lyricsConsent; height: 278
   onClosed: lyricsToggle.checked=Qt.binding(function(){return bridge.musicOnline})
   ColumnLayout { anchors.fill: parent; spacing: 12
    RioText { text: win.tr("Online lyric matching","在线歌词匹配"); font.pixelSize: 17; color: "#edf0f2" }
-   RioText { Layout.fillWidth: true; Layout.fillHeight: true; wrapMode: Text.WordWrap; font.pixelSize: 12; color: "#b2bdc4"; text: win.tr("Send song title, artist, album and duration to LRCLIB.net to find timed lyrics. Audio and account credentials are never sent. Matches are not guaranteed.","将歌名、歌手、专辑和时长发送给 LRCLIB.net 查询同步歌词，不发送音频和账号凭据，不保证每首歌都有结果。") }
+   RioText { Layout.fillWidth: true; Layout.fillHeight: true; wrapMode: Text.WordWrap; font.pixelSize: 12; color: "#b2bdc4"; text: win.tr("Match lyrics with QQ Music or NetEase for recognized players, then LRCLIB.net as fallback. Song metadata is sent to these services; never audio or account credentials. Unofficial platform interfaces may stop working.","识别到 QQ 音乐或网易云时，先向对应平台查询歌词，再用 LRCLIB.net 兜底。会发送歌曲信息，不发送音频或账号凭据。平台非公开接口可能失效，不保证匹配成功。") }
    ConfirmationActions { onRejected: { bridge.setMusicOnline(false); lyricsConsent.close() } onAccepted: { bridge.setMusicOnline(true); lyricsConsent.close() } }
   }
  }
