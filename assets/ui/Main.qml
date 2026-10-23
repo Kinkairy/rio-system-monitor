@@ -176,7 +176,8 @@ ApplicationWindow {
    x: currentVersion.x+currentVersion.implicitWidth+6; y: 594; width: 72; height: 34; text: "Check updates"
    leftPadding: 0; rightPadding: 0; showOutline: false; fill: "transparent"
    enabled: bridge.updateState!=="checking" && bridge.updateState!=="downloading" && bridge.updateState!=="ready"
-   opacity: 1; ink: enabled ? "#a7eb52" : "#829074"
+   opacity: 1; ink: !enabled ? "#829074" : hovered || down || activeFocus ? "#d1ff9b" : "#a7eb52"
+   background: Item {}
    font.family: currentVersion.font.family; font.pixelSize: currentVersion.font.pixelSize; font.underline: true
    contentItem: EnglishText { text: updateLink.text; color: updateLink.ink; font: updateLink.font; verticalAlignment: Text.AlignVCenter }
    onClicked: bridge.checkUpdates()

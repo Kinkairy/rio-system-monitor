@@ -38,6 +38,8 @@ class BridgeTests(unittest.TestCase):
   self.b.setLanguage('en');self.assertEqual(self.b.footerStatus,'Downloading…')
   updater.update(state='ready',progress=100);self.b.consume()
   self.assertFalse(self.b.footerBusy);self.assertEqual(self.b.footerStatus,'Exit to apply update')
+  updater.update(state='latest');self.b.consume();self.assertEqual(self.b.footerStatus,'');self.assertFalse(self.b.footerBusy)
+  self.b.setLanguage('zh');self.assertEqual(self.b.footerStatus,'')
  def test_rotation_applies_before_debounced_save_without_weather_restart(self):
   self.b.capture=False
   with patch('rio_monitor.qt_app.save') as save:
@@ -58,6 +60,11 @@ class BridgeTests(unittest.TestCase):
   with patch('rio_monitor.qt_app.set_autostart',side_effect=OSError('Access denied')):
    self.b.setAutostart(True)
   self.assertFalse(self.b.s.autostart);self.assertFalse(self.b._dirty);self.assertIn('Access denied',self.b.notice)
+ def test_already_enabled_autostart_refreshes_moved_program_path_without_saving_preferences(self):
+  self.b.s.autostart=True;self.b.capture=False
+  with patch('rio_monitor.qt_app.set_autostart') as register,patch('rio_monitor.qt_app.save') as save:
+   self.b.setAutostart(True);register.assert_called_once_with(True)
+   self.assertTrue(self.b.s.autostart);self.assertFalse(self.b._dirty);save.assert_not_called()
  def test_close_flushes_pending_rotation_without_waiting(self):
   self.b.capture=False;self.b.win=Mock();self.b.tray=Mock();self.b.tray.isVisible.return_value=True
   with patch('rio_monitor.qt_app.save') as save:

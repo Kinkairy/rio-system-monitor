@@ -73,7 +73,7 @@ class Bridge(QObject):
   if storage['busy']:
    labels={'prepare':('Preparing media…','正在转换媒体…'),'connecting':('Connecting…','正在连接屏幕…'),'erase':('Preparing storage…','正在准备存储…'),'write':('Writing media…','正在写入媒体…')}
    return labels.get(storage['phase'],labels['prepare'])[1 if zh else 0]
-  labels={'checking':('Checking…','正在检测更新…'),'downloading':('Downloading…','正在下载更新'),'latest':('Up to date','已是最新版本'),'ready':('Exit to apply update','退出后完成更新'),'error':('Update failed','更新失败 · 请重试')}
+  labels={'checking':('Checking…','正在检测更新…'),'downloading':('Downloading…','正在下载更新'),'ready':('Exit to apply update','退出后完成更新'),'error':('Update failed','更新失败 · 请重试')}
   return labels.get(self.updateState,('',''))[1 if zh else 0]
  footerStatus=Property(str,getFooterStatus,notify=changed)
  footerBusy=Property(bool,lambda self:self.monitorBusy or self.storageBusy or self.updateState in ('checking','downloading'),notify=changed)
@@ -190,7 +190,7 @@ class Bridge(QObject):
   if 0<=value<=359:self.applySettings(rotation=value)
  @Slot(bool)
  def setAutostart(self,value):
-  if value==self.s.autostart:return
+  if value==self.s.autostart and not value:return
   try:
    if not self.capture:set_autostart(value)
   except Exception as ex:self.changed.emit();self.tell(str(ex));return
@@ -311,6 +311,7 @@ def main():
  settings=Settings(weather_mode='off') if args.ui_capture else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not args.ui_capture);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets,cache_dir=None if args.ui_capture else config_path().parent/'screen-content');music=Music(config_path().parent/'lyrics',settings.music_enabled,settings.music_online_lyrics,settings.music_source,start=not args.ui_capture);bridge=Bridge(app,settings,weather,provider,bool(args.ui_capture),monitor=monitor,storage=storage,music=music,updater=updater);engine=QQmlApplicationEngine();engine.addImageProvider('monitor',provider);engine.rootContext().setContextProperty('bridge',bridge);engine.load(QUrl.fromLocalFile(str(assets/'ui/Main.qml')))
  if not engine.rootObjects():raise RuntimeError('Qt Quick main window failed to load')
  bridge.win=engine.rootObjects()[0];bridge.tray=QSystemTrayIcon(app.windowIcon(),app);bridge.tray.setToolTip('RIO System Monitor '+__version__);bridge.updateMenu();bridge.tray.activated.connect(bridge.trayActivated)
+ if settings.autostart and getattr(sys,'frozen',False) and not args.ui_capture and not args.self_test:bridge.setAutostart(True)
  if not args.ui_capture:bridge.tray.show()
  if not args.ui_capture and not (args.show_settings or args.show_content):QTimer.singleShot(0,bridge.hideWindow)
  if args.show_content:
