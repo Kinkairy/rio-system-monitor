@@ -3,13 +3,14 @@
 Only the resource window may be erased/written. No firmware/configuration commands.
 Hardware resource-write and power-cycle acceptance remain separate from source tests.
 """
-import io, struct
+import io, struct, time
 from PIL import Image
 from .protocol import ProtocolError, validate_status
 
 RESOURCE_WINDOW = 0x3B6000
 BLOCK = 4096
 MAX_MEDIA_BYTES = 3_400_000  # Decimal MB, as displayed in the UI.
+QUERY_SETTLE_SECONDS = 1.0
 QUERY = bytes.fromhex('cd000000000300000000000000000000')
 PLAY = bytes.fromhex('cd000000000401000000000000000000')
 
@@ -89,6 +90,10 @@ class ResourceSender:
     def upload(self,blob,progress=lambda phase,done,total:None,before_erase=lambda:None):
         validate_blob(blob)  # All validation precedes the first erase.
         self.verify_device()
+        # This firmware acknowledges the query before it can accept a flash command.
+        # The static reference also waits one second after querying the device.
+        # Keep this on the storage worker, before invalidating its previous preview.
+        time.sleep(QUERY_SETTLE_SECONDS)
         before_erase()
         offsets=range(0,len(blob),BLOCK);total=len(offsets)*2+1;done=0
         for phase in ('erase','write'):

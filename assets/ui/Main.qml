@@ -14,6 +14,7 @@ ApplicationWindow {
  font.family: win.zh ? "Microsoft YaHei UI" : "Segoe UI"
  font.pixelSize: 13
  component RioText: Text { font.family: win.zh ? "Microsoft YaHei UI" : "Segoe UI" }
+ component EnglishText: RioText { font.family: "Segoe UI" }
  component SoftShadow: Item {
   property bool pressed: false
   property real cornerRadius: 8
@@ -141,7 +142,7 @@ ApplicationWindow {
    Image { id: screen; anchors.fill: parent; source: "image://monitor/frame?"+bridge.frameId; cache: false; smooth: true; rotation: bridge.rotation; fillMode: Image.PreserveAspectFit }
   }
   RioText { x: 212; y: 119; text: win.tr("Screen rotation","屏幕方向"); color: "#dce3e6"; font.pixelSize: 13 }
-  RioText { x: 212; y: 147; text: Math.round(rotationSlider.value)+"°"; color: "#a7eb52"; font.pixelSize: 24; font.weight: Font.DemiBold }
+  EnglishText { x: 212; y: 147; text: Math.round(rotationSlider.value)+"°"; color: "#a7eb52"; font.pixelSize: 24; font.weight: Font.DemiBold }
   Slider {
    id: rotationSlider; objectName: "rotationSlider"; hoverEnabled: true; x: 204; y: 188; width: 194; height: 32; from: 0; to: 359; stepSize: 1; value: bridge.rotation
    onMoved: bridge.setRotation(Math.round(value))
@@ -161,7 +162,7 @@ ApplicationWindow {
   RioText { x: 24; y: 490; text: win.tr("Start at login","登录后自动启动"); color: "#dce3e6" }
   RioSwitch { id: autoSwitch; objectName: "autoSwitch"; x: 358; y: 484; checked: bridge.autostart; onToggled: bridge.setAutostart(checked) }
   Rectangle { x: 20; y: 530; width: 380; height: 1; color: "#292f32" }
-  RioText { x: 24; y: 561; text: "Your system. At a glance."; color: "#899398"; font.pixelSize: 10 }
+  EnglishText { x: 24; y: 561; text: "Your system. At a glance."; color: "#899398"; font.pixelSize: 10 }
   Row {
    id: temperatureLoading; objectName: "temperatureLoading"; x: (parent.width-width)/2; y: 563; spacing: 7; visible: bridge.monitorBusy || bridge.storageBusy
    Repeater {
@@ -228,8 +229,8 @@ ApplicationWindow {
       AnimatedImage { anchors.fill: parent; source: bridge.storagePreview; playing: storagePopup.visible; fillMode: Image.PreserveAspectFit; visible: source.toString() !== "" }
       RioText { anchors.centerIn: parent; width: parent.width; wrapMode: Text.WordWrap; text: win.tr("Stored preview unavailable","暂无屏内内容预览"); color: "#819099"; horizontalAlignment: Text.AlignHCenter; visible: bridge.storagePreview === "" }
      }
-     RioText { id: storageFilename; width: parent.width; text: bridge.storageName; color: "#edf0f2"; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
-     RioText { id: storageFileInfo; width: parent.width; text: bridge.storageDetail; color: "#91a0a9"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap }
+     EnglishText { id: storageFilename; width: parent.width; text: bridge.storageName; color: "#edf0f2"; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
+     EnglishText { id: storageFileInfo; width: parent.width; text: bridge.storageDetail; color: "#91a0a9"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap }
     }
    }
    ProgressBar { visible: bridge.storageWriting; Layout.fillWidth: true; from: 0; to: 1; value: bridge.storageProgress

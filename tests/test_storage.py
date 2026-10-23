@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import Mock,patch
 from PIL import Image
 from rio_monitor.resources import (ResourceSender,resource_cdb,pack_resource,
-                                  RESOURCE_WINDOW,BLOCK,QUERY,PLAY,MAX_MEDIA_BYTES)
+                                  RESOURCE_WINDOW,BLOCK,QUERY,PLAY,MAX_MEDIA_BYTES,QUERY_SETTLE_SECONDS)
 from rio_monitor.protocol import ProtocolError
 from rio_monitor.storage import DisplaySession,StorageJob
 from rio_monitor.media import prepare_media
@@ -34,6 +34,25 @@ class Transport:
     def set_timeout(self,value):pass
 
 class ResourceTests(unittest.TestCase):
+    def test_query_settles_before_cache_invalidation_and_first_erase(self):
+        transport=Transport();settled=[];write=transport.write
+        def guarded_write(ep,data):
+            if len(data)==31 and data[15:17]==b'\xfb\xd8':
+                self.assertEqual(settled,['settled','invalidated'])
+            return write(ep,data)
+        transport.write=guarded_write
+        def settle(seconds):
+            self.assertEqual(seconds,QUERY_SETTLE_SECONDS);self.assertGreaterEqual(seconds,1.0)
+            self.assertEqual(transport.commands,[QUERY]);settled.append('settled')
+        with patch('rio_monitor.resources.time.sleep',side_effect=settle) as wait:
+            ResourceSender(transport).upload(pack_resource(gif()),before_erase=lambda:settled.append('invalidated'))
+        wait.assert_called_once();self.assertEqual(transport.commands[-1],PLAY)
+    def test_failed_query_does_not_wait_invalidate_or_erase(self):
+        transport=Transport();transport.fail='status';invalidate=Mock()
+        with patch('rio_monitor.resources.time.sleep') as wait:
+            with self.assertRaises(ProtocolError):
+                ResourceSender(transport).upload(pack_resource(gif()),before_erase=invalidate)
+        wait.assert_not_called();invalidate.assert_not_called();self.assertEqual(transport.commands,[QUERY])
     def test_roundtrip_blocks_and_play_after_last_ack(self):
         transport=Transport();sender=ResourceSender(transport);blob=pack_resource(gif());events=[]
         sender.upload(blob,lambda *v:events.append(v))
