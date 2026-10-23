@@ -14,6 +14,8 @@ Approved split layout: original private RIO badge, rotating 188px cover on a 222
 
 Monitor/music view changes use the same 550ms centered pop: scale from 72%, briefly overshoot to about 106%, and settle at 100%. A short initial opacity ramp avoids a hard first frame. Reversing during the effect continues from the last composed frame. No UI-thread wait or additional telemetry collection is involved. Song titles remain centered when they fit; long titles move back and forth within the 310px title area at 32px/second, holding one second at each end. Artist text is 14px instead of 10px.
 
+The approved lyric layout and fonts remain: 19px first row, 23px second row and 13px next-lyric preview. Wrapping preserves every character; text remaining after the first row stays in the second row instead of being discarded. Each row is measured at its actual font size. Only an overflowing row scrolls left within its 125px area to reveal the end across the LRC time interval, with short holds at the beginning and end. Seeking selects the corresponding position and pause holds it. Fitting rows remain still; there is no pagination or font normalization.
+
 Track change: record exits left in 260ms. Four lyric display rows exit right in 180ms each, staggered 40ms (300ms total). New content enters after 380ms. Fonts use private RIOPixel when supplied; otherwise existing Born2bSporty fallback. CJK text uses Windows Microsoft YaHei or explicitly supplied compatible font. Fonts and screenshots must not enter the public source repo.
 
 ## Compatibility research (2026-10-23)
