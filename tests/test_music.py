@@ -1,9 +1,9 @@
-import unittest,tempfile,time,math,io
+import unittest,tempfile
 from pathlib import Path
 from unittest.mock import patch,AsyncMock
 from PIL import Image
 from rio_monitor.music.state import Track,Audio,Spectrum,select_session,AutomaticMusicView
-from rio_monitor.music.lyrics import parse_lrc,current_lines,lookup
+from rio_monitor.music.lyrics import Lyric,parse_lrc,current_lines,lookup
 from rio_monitor.music.controller import Music
 from rio_monitor.music.renderer import MusicRenderer,marquee_offset
 from rio_monitor.music.windows import CoverCache
@@ -27,6 +27,35 @@ class CoverTests(unittest.IsolatedAsyncioTestCase):
    self.assertEqual(await cache.get('two','thumbnail',102.5),b'second')
 
 class MusicTests(unittest.TestCase):
+ def test_long_lyrics_keep_all_words_and_scroll_horizontally_with_original_fonts(self):
+  from dataclasses import replace
+  with tempfile.TemporaryDirectory() as tmp:
+   renderer=MusicRenderer(tmp);text='A LONG LYRIC LINE WITH ENOUGH WORDS TO REQUIRE SEVERAL PAGES AND SHOW EVERY WORD'
+   wrapped=renderer.wrap_text(text,19);self.assertGreater(len(wrapped),2)
+   font=renderer.font(renderer.chinese,19)
+   self.assertTrue(all(font.getlength(line)<=125 for line in wrapped));self.assertEqual(''.join(wrapped),text)
+   state=dict(track=Track(title='Song',duration=30,position=0,observed=100),rows=(Lyric(0,text),Lyric(10,'NEXT LINE')),lyric_status='ready')
+   offsets=[]
+   for position in (0,2,2.01,5,9.9):
+    state['track']=replace(state['track'],position=position)
+    parts,following,offset=renderer.lyric_lines(state,100,False)
+    self.assertEqual(''.join(parts),text);offsets.append(offset)
+    self.assertEqual(parts[0],wrapped[0])
+    self.assertGreater(renderer.lyric_strip(parts[1],23,'#f0e351').width,125)
+   self.assertEqual(offsets[0],0);self.assertGreater(offsets[-1],0)
+   self.assertTrue(all(a<=b for a,b in zip(offsets,offsets[1:])))
+   self.assertGreater(offsets[2],offsets[1]);self.assertLess(offsets[2]-offsets[1],1)
+   state['track']=replace(state['track'],position=10)
+   self.assertEqual(renderer.lyric_lines(state,100,False)[0],('NEXT LINE',''))
+ def test_paused_lyric_scroll_is_stable_and_seeking_back_restores_start(self):
+  from dataclasses import replace
+  with tempfile.TemporaryDirectory() as tmp:
+   renderer=MusicRenderer(tmp);text=' '.join(['LONG LYRIC']*14)
+   state=dict(track=Track(title='Song',duration=40,position=8,observed=100),rows=(Lyric(0,text),Lyric(10,'NEXT')),lyric_status='ready')
+   paused=renderer.lyric_lines(state,100,False)
+   self.assertEqual(renderer.lyric_lines(state,102,False),paused)
+   state['track']=replace(state['track'],position=0)
+   self.assertEqual(renderer.lyric_lines(state,100,False)[2],0)
  def test_title_scrolls_both_directions_with_pauses_and_short_titles_stay_still(self):
   # 64 extra pixels at 32 pixels/second: hold, travel, hold, return, repeat.
   expected={0:0,.5:0,1:0,2:32,3:64,3.5:64,4:64,5:32,6:0,6.5:0}

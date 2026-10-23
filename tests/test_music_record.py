@@ -17,6 +17,7 @@ class RecordTests(unittest.TestCase):
    self.assets(root);r=MusicRenderer(root);buf=io.BytesIO();Image.new('RGB',(100,100),'red').save(buf,format='PNG')
    im=r.render(self.snapshot(buf.getvalue()),1)
    self.assertEqual(im.getpixel((160,246)),(0,255,0));self.assertEqual(im.getpixel((160,186)),(255,0,0))
+   self.assertEqual(im.getpixel((160,140)),(0,0,255))  # The supplied record remains underneath a valid cover.
  def test_missing_private_art_still_renders_and_cache_is_bounded(self):
   with tempfile.TemporaryDirectory() as root:
    r=MusicRenderer(root)

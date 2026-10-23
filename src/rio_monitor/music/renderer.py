@@ -1,7 +1,8 @@
 """Approved 480px music layout, real values only; UI preview artwork stays private."""
-from PIL import Image,ImageDraw,ImageFont,ImageFilter,ImageOps
+from PIL import Image,ImageDraw,ImageFont,ImageOps
 from pathlib import Path
 from functools import lru_cache
+from bisect import bisect_right
 import math,io,os,time
 from ..model import Spring
 from .state import Track,Audio
@@ -24,10 +25,15 @@ def marquee_offset(width,viewport,elapsed,speed=32,pause=1):
     if phase<2*pause+travel:return distance
     return distance-(phase-2*pause-travel)*speed
 
+def lyric_scroll_offset(distance,elapsed,span):
+    if distance<=0:return 0
+    hold=min(.65,span*.15)
+    return distance*max(0,min(1,(elapsed-hold)/max(.1,span-2*hold)))
+
 class MusicRenderer:
  def __init__(self,assets):
   self.assets=Path(assets);self.columns=[Spring(damping=14) for _ in range(24)];self.level=Spring(damping=14)
-  self.current=Track();self.previous=Track();self.changed=None;self.previous_lines=('','','','');self.last_lines=self.previous_lines;self.last=None;self.angle=0;self.covers={};self.title_key=None;self.title_since=0
+  self.current=Track();self.previous=Track();self.changed=None;self.previous_lines=((),(),0);self.last_lines=self.previous_lines;self.last=None;self.angle=0;self.covers={};self.title_key=None;self.title_since=0
   self.pixel=str(self.assets/'fonts/RIOPixel-Regular.ttf')
   if not Path(self.pixel).is_file():self.pixel=str(self.assets/'fonts/Born2bSporty.otf')
   self.chinese=next((str(p) for p in [self.assets/'fonts/NotoSansCJK-Regular.ttc',Path(os.environ.get('WINDIR','C:/Windows'))/'Fonts/msyh.ttc',Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc')] if p.is_file()),self.pixel)
@@ -87,23 +93,39 @@ class MusicRenderer:
    return image
  def lyric_lines(self,snapshot,now,zh):
   track=snapshot['track'];position=track.position_at(now)
-  if not track.title:return ('等待播放' if zh else 'WAITING','', '', '')
-  if position is None:return ('暂无时间轴' if zh else 'NO TIMELINE','','','')
+  if not track.title:return (('等待播放' if zh else 'WAITING',),(),0)
+  if position is None:return (('暂无时间轴' if zh else 'NO TIMELINE',),(),0)
   current,nextline=current_lines(snapshot['rows'],position)
   if not current and not nextline:
    status=snapshot['lyric_status']
    message={'loading':('加载歌词','LOADING'),'instrumental':('纯音乐','INSTRUMENTAL'),'online_off':('未开启在线歌词','LYRICS OFF')}.get(status,('暂无歌词','NO LYRICS'))
-   return (message[0 if zh else 1],'','','')
-  return tuple(self.wrap_text(current,19)+self.wrap_text(nextline,13))
+   return ((message[0 if zh else 1],),(),0)
+  parts=self.wrap_text(current,19);following=self.wrap_text(nextline,13);progress=0
+  index=bisect_right([row.time for row in snapshot['rows']],position)-1
+  if index>=0:
+   start=snapshot['rows'][index].time
+   end=snapshot['rows'][index+1].time if index+1<len(snapshot['rows']) else track.duration
+   span=end-start if end>start else 8
+   progress=lyric_scroll_offset(1,position-start,span)
+  return ((parts[0],''.join(parts[1:])),(following[0],''.join(following[1:])),progress)
  @lru_cache(maxsize=128)
  def wrap_text(self,text,size):
   parts=[''];font=self.font(self.chinese,size*S)
   for char in text:
    if font.getlength(parts[-1]+char)>125*S and parts[-1]:
-    if len(parts)>=2:break
     parts.append('')
    parts[-1]+=char
-  return (parts+['',''])[:2]
+  return parts
+ @lru_cache(maxsize=16)
+ def lyric_strip(self,text,size,color):
+  font=self.font(self.chinese,size*S);height=(28 if size>13 else 20)*S
+  strip=Image.new('RGBA',(max(1,math.ceil(font.getlength(text))),height))
+  ImageDraw.Draw(strip).text((0,height/2),text,font=font,fill=color,anchor='lm')
+  return strip
+ def draw_lyric_row(self,layer,text,size,color,x,y,progress):
+  strip=self.lyric_strip(text,size,color);offset=max(0,strip.width-125*S)*progress
+  visible=strip.transform((125*S,strip.height),Image.Transform.AFFINE,(1,0,offset,0,1,0),resample=Image.Resampling.BICUBIC)
+  layer.paste(visible,(round(x*S),round(y*S-strip.height/2)))
  def render(self,snapshot,now=None,language='en'):
   now=time.monotonic() if now is None else now;zh=language=='zh';dt=min(.1,max(0,now-self.last)) if self.last is not None else 1/30;self.last=now
   incoming=snapshot['track'];audio=snapshot['audio'].current(now)
@@ -160,19 +182,14 @@ class MusicRenderer:
   tx(240,132,short(track.artist or source_label(track.source),font,14,310),14,'#719c8c')
   # Draw the record on an independent layer for the track transition.
   base=im
-  im=Image.new('RGBA',base.size);d=ImageDraw.Draw(im)
+  im=Image.new('RGBA',base.size)
   # Offset record leaves a dedicated readable lyric column.
-  cx,cy,R=160,246,111
+  cx,cy=160,246
+  record=self.private_record_art('default-record.png',222*S).rotate(-self.angle,resample=Image.Resampling.BICUBIC)
+  im.paste(record,((cx-111)*S,(cy-111)*S),record)
   cover=self.cover_for(track)
-  if cover is None:
-   art=self.private_record_art('default-record.png',222*S).rotate(-self.angle,resample=Image.Resampling.BICUBIC)
-   im.paste(art,((cx-111)*S,(cy-111)*S),art)
-  else:
-   d.ellipse(b((cx-R,cy-R,cx+R,cy+R)),fill='#0b131a',outline='#687f7a',width=2*S)
-   for r in range(82,108,4):d.ellipse(b((cx-r,cy-r,cx+r,cy+r)),outline='#2b3e45',width=S)
-   for a,c in [(self.angle,'#5c8c8d'),(self.angle+180,'#756883')]:
-    for r in range(84,108,4):d.arc(b((cx-r,cy-r,cx+r,cy+r)),a,a+28,fill=c,width=S)
-   art=cover.rotate(-self.angle,resample=Image.Resampling.BICUBIC);im.paste(art,((cx-94)*S,(cy-94)*S),art);d=ImageDraw.Draw(im)
+  if cover is not None:
+   art=cover.rotate(-self.angle,resample=Image.Resampling.BICUBIC);im.paste(art,((cx-94)*S,(cy-94)*S),art)
    label=self.private_record_art('record-label.png',74*S).rotate(-self.angle,resample=Image.Resampling.BICUBIC)
    im.paste(label,((cx-37)*S,(cy-37)*S),label)
   moving=Image.new('RGBA',base.size);moving.paste(im,(round(record_dx*S),0))
@@ -184,10 +201,9 @@ class MusicRenderer:
   rect((279,195,282,285),'#245c4c');rect((279,220,282,251),'#7cebbb')
   tx(302,194,'LYRICS',9,'#78958d',anchor='lm')
   base=im;im=Image.new('RGBA',base.size);d=ImageDraw.Draw(im)
-  tx(299+slide(0),226,lines[0],19,'#b9ffcb',cn,'lm')
-  tx(299+slide(1),254,lines[1],23,'#f0e351',cn,'lm')
-  tx(299+slide(2),290,lines[2],13,'#597d70',cn,'lm')
-  tx(299+slide(3),311,lines[3],13,'#597d70',cn,'lm')
+  current=list(lines[0])+['',''];following=list(lines[1])+['','']
+  for row,text,size,color,y in [(0,current[0],19,'#b9ffcb',226),(1,current[1],23,'#f0e351',254),(2,following[0],13,'#597d70',290),(3,following[1],13,'#597d70',311)]:
+   self.draw_lyric_row(im,text,size,color,299+slide(row),y,lines[2])
   clip=Image.new('L',base.size);ImageDraw.Draw(clip).rectangle(b((290,205,433,322)),fill=255)
   im.putalpha(ImageChops.multiply(im.getchannel('A'),clip));base.paste(im,(0,0),im);im=base;d=ImageDraw.Draw(im)
   for x,c in [(306,'#62d3c7'),(322,'#ad8cda'),(338,'#e2d65b')]:poly([(x,335),(x+5,329),(x+10,329),(x+5,335)],c)
