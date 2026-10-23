@@ -2,7 +2,7 @@
 
 ## Architecture and privacy
 
-Music mode is a separate live renderer and does not replace monitoring or screen-storage ownership. Enable it from Settings > Music mode, or the tray. Disabling it stops media/audio acquisition. No microphone is opened. WASAPI loopback captures the default output-device mix in memory, including unrelated app sounds. Audio is never saved, transmitted or sent to lyric services. Device changes reopen the loopback stream. Exclusive/DRM playback can be unavailable.
+Music mode is a separate live renderer and does not replace monitoring or screen-storage ownership. Enable Music appreciation with the shared switch directly in the main settings window. The tray remains exactly Exit, Settings and Start at login; no music items are added. The display enters the music view when the selected player starts playing. After pause or stop it keeps that view for 30 continuous seconds, then returns to monitoring; resuming playback cancels the countdown. Turning the switch off returns immediately and stops media/audio acquisition. A missing/stale player session also expires the music view, while unrelated output sounds alone do not trigger it. No microphone is opened. WASAPI loopback captures the default output-device mix in memory, including unrelated app sounds. Audio is never saved, transmitted or sent to lyric services. Device changes reopen the loopback stream. Exclusive/DRM playback can be unavailable.
 
 SMTC supplies title/artist/album, thumbnail, playback state and timeline when published by the selected player. Auto selection keeps the previous playing session to prevent unnecessary switches. An explicit selected session never silently falls back to another app. Timeline missing or stale: do not invent lyric synchronization. Artwork decode is bounded and cached. Empty artwork uses a neutral RIO record, not a fictitious album.
 
@@ -44,7 +44,7 @@ Sources:
 
 ## Validation boundary
 
-Unit tests exercise silence/stale audio, stereo phase cancellation, LRC parsing/seeking, explicit source selection, opt-in boundaries, local imports, wrong lyric-version rejection, missing art, paused rotation and transitions. Linux offscreen QML validation is not Windows hardware validation. Windows SMTC/loopback, headphone switching, minimized/tray behavior, dependency bundling and USB sustained frame rate still require Windows tests. No new deployment or driver installation is performed by this change.
+Unit tests exercise silence/stale audio, stereo phase cancellation, LRC parsing/seeking, explicit source selection, opt-in boundaries, local imports, wrong lyric-version rejection, missing art, paused rotation and transitions, plus the 30-second pause/stop return and resume cancellation. Windows integration builds include the Foundation and Foundation.Collections WinRT projections as well as Media.Control and Storage.Streams; namespace imports alone do not verify a complete asynchronous SMTC query. No additional system driver is needed for these music providers. Live player metadata, actual loopback spectrum, headphone switching, tray interaction, dependency bundling and USB sustained frame rate are recorded separately from source tests.
 
 ## Source-specific lyrics (2026-10-23)
 
