@@ -37,9 +37,21 @@ class BridgeTests(unittest.TestCase):
   self.b.storage.update(busy=False);self.assertAlmostEqual(self.b.footerProgress,.42)
   self.b.setLanguage('en');self.assertEqual(self.b.footerStatus,'Downloading…')
   updater.update(state='ready',progress=100);self.b.consume()
-  self.assertFalse(self.b.footerBusy);self.assertEqual(self.b.footerStatus,'Exit to apply update')
+  self.assertFalse(self.b.footerBusy);self.assertEqual(self.b.footerStatus,'Restarting…')
   updater.update(state='latest');self.b.consume();self.assertEqual(self.b.footerStatus,'');self.assertFalse(self.b.footerBusy)
   self.b.setLanguage('zh');self.assertEqual(self.b.footerStatus,'')
+ def test_verified_update_exits_once_after_existing_jobs_finish(self):
+  from rio_monitor.updater import AutoUpdater
+  self.b.capture=False;self.b.updater=AutoUpdater('unused-updates')
+  with patch.object(self.b,'exit') as exit:
+   for state in ('checking','downloading','error'):
+    self.b.updater.update(state=state);self.b.consume()
+   exit.assert_not_called()
+   self.b.updater.update(state='ready',progress=100);self.b.storage.update(busy=True)
+   self.b.consume();exit.assert_not_called()
+   self.b.storage.update(busy=False);self.b.monitor.busy=True
+   self.b.consume();exit.assert_not_called()
+   self.b.monitor.busy=False;self.b.consume();self.b.consume();exit.assert_called_once()
  def test_rotation_applies_before_debounced_save_without_weather_restart(self):
   self.b.capture=False
   with patch('rio_monitor.qt_app.save') as save:

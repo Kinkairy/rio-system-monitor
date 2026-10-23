@@ -44,7 +44,7 @@ class Bridge(QObject):
   self.monitor=monitor or TemperatureComponent(Path(),settings.temperature_monitor,start=False);self.monitor_snapshot=None
   self.storage=storage or StorageJob(DisplaySession(settings.display_mode),Path());self.storage_snapshot=None
   self.music=music or Music(Path(),start=False);self.music_signature=None
-  self.updater=updater;self.update_snapshot=updater.snapshot() if updater else dict(state='idle',connection='unknown',progress=0)
+  self.updater=updater;self.update_snapshot=updater.snapshot() if updater else dict(state='idle',connection='unknown',progress=0);self.update_exit_started=False
   self._reset_requested=False
   if settings.weather_mode=='manual':
    try:self._city=json.loads(settings.city)['label'].split(',')[0]
@@ -73,7 +73,7 @@ class Bridge(QObject):
   if storage['busy']:
    labels={'prepare':('Preparing media…','正在转换媒体…'),'connecting':('Connecting…','正在连接屏幕…'),'erase':('Preparing storage…','正在准备存储…'),'write':('Writing media…','正在写入媒体…')}
    return labels.get(storage['phase'],labels['prepare'])[1 if zh else 0]
-  labels={'checking':('Checking…','正在检测更新…'),'downloading':('Downloading…','正在下载更新'),'ready':('Exit to apply update','退出后完成更新'),'error':('Update failed','更新失败 · 请重试')}
+  labels={'checking':('Checking…','正在检测更新…'),'downloading':('Downloading…','正在下载更新'),'ready':('Restarting…','正在重启更新…'),'error':('Update failed','更新失败 · 请重试')}
   return labels.get(self.updateState,('',''))[1 if zh else 0]
  footerStatus=Property(str,getFooterStatus,notify=changed)
  footerBusy=Property(bool,lambda self:self.monitorBusy or self.storageBusy or self.updateState in ('checking','downloading'),notify=changed)
@@ -276,6 +276,8 @@ class Bridge(QObject):
   snapshot=self.monitor.snapshot()
   if snapshot!=self.monitor_snapshot:
    self.monitor_snapshot=snapshot;self.applySettings(temperature_monitor=snapshot['enabled']);self.changed.emit()
+  if self.updater and not self.capture and self.update_snapshot['state']=='ready' and not self.update_exit_started and not storage_snapshot['busy'] and not snapshot['busy']:
+   self.update_exit_started=True;self.exit();return
   if self.mode=='auto' and not self._city and self.weather.location:
    self._city=self.weather.location[2].split(',')[0];self.changed.emit()
   while not self.mail.empty():
@@ -305,6 +307,10 @@ def main():
   frame.save(args.snapshot);collector.gpu.close();return
  instance=acquire_instance()
  if instance is None:return 0
+ if sys.platform=='win32':
+  import ctypes
+  shell=ctypes.WinDLL('shell32');shell.SetCurrentProcessExplicitAppUserModelID.argtypes=[ctypes.c_wchar_p]
+  shell.SetCurrentProcessExplicitAppUserModelID('Kinkairy.RIO.SystemMonitor')
  QQuickStyle.setStyle('Basic')
  app=QApplication(sys.argv);app.setQuitOnLastWindowClosed(False);app.setApplicationName('RIO System Monitor');app.setApplicationVersion(__version__);app.setFont(QFont('Segoe UI',10))
  assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets';app.setWindowIcon(QIcon(str(assets/'rio-icon.ico')))
@@ -312,7 +318,7 @@ def main():
  updater=AutoUpdater(config_path().parent/'updates') if getattr(sys,'frozen',False) and not args.ui_capture and not args.self_test else None
  settings=Settings(weather_mode='off') if args.ui_capture else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not args.ui_capture);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets,cache_dir=None if args.ui_capture else config_path().parent/'screen-content');music=Music(config_path().parent/'lyrics',settings.music_enabled,settings.music_online_lyrics,settings.music_source,start=not args.ui_capture);bridge=Bridge(app,settings,weather,provider,bool(args.ui_capture),monitor=monitor,storage=storage,music=music,updater=updater);engine=QQmlApplicationEngine();engine.addImageProvider('monitor',provider);engine.rootContext().setContextProperty('bridge',bridge);engine.load(QUrl.fromLocalFile(str(assets/'ui/Main.qml')))
  if not engine.rootObjects():raise RuntimeError('Qt Quick main window failed to load')
- bridge.win=engine.rootObjects()[0];bridge.tray=QSystemTrayIcon(app.windowIcon(),app);bridge.tray.setToolTip('RIO System Monitor '+__version__);bridge.updateMenu();bridge.tray.activated.connect(bridge.trayActivated)
+ bridge.win=engine.rootObjects()[0];bridge.win.setIcon(app.windowIcon());bridge.tray=QSystemTrayIcon(app.windowIcon(),app);bridge.tray.setToolTip('RIO System Monitor '+__version__);bridge.updateMenu();bridge.tray.activated.connect(bridge.trayActivated)
  if settings.autostart and getattr(sys,'frozen',False) and not args.ui_capture and not args.self_test:bridge.setAutostart(True)
  if not args.ui_capture:bridge.tray.show()
  if not args.ui_capture and not (args.show_settings or args.show_content):QTimer.singleShot(0,bridge.hideWindow)

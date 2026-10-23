@@ -74,6 +74,7 @@ try {
     Copy-Item -LiteralPath $staged -Destination $replacement -Force
     [IO.File]::Replace($replacement,$target,[NullString]::Value)
     Remove-Item -LiteralPath $staged -Force
+    Start-Process -FilePath $target -ArgumentList '--show-settings' -WindowStyle Hidden
     @{status='installed';version=$data.version} | ConvertTo-Json | Set-Content -LiteralPath $data.status_path -Encoding UTF8
 } catch {
     @{status='install_failed';version=$data.version;error=$_.Exception.Message} | ConvertTo-Json | Set-Content -LiteralPath $data.status_path -Encoding UTF8
