@@ -1,5 +1,5 @@
 import queue,threading
-from .protocol import FrameSender,encode_rgb565
+from .protocol import FrameSender,ProtocolError,encode_rgb565
 from .winusb import WinUSB
 class ScreenOutput:
     """Latest-frame queue; never pile up or retry an uncertain USB operation."""
@@ -25,7 +25,11 @@ class ScreenOutput:
                 except queue.Empty:continue
                 if image.size!=(480,480):raise ValueError('Expected a 480x480 frame')
                 sender.send(encode_rgb565(image));self.sent+=1
-        except Exception as exc:self.error=str(exc);self.stop.set()
+        except Exception as exc:
+            self.error=str(exc);self.stop.set()
+            if transport and isinstance(exc,(OSError,ProtocolError)):
+                try:transport.reset_pipes()
+                except Exception as recovery:self.error+='; USB pipe reset failed: '+str(recovery)
         finally:
             try:
                 if transport:transport.close()

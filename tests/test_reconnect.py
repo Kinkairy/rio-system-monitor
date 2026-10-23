@@ -21,7 +21,7 @@ class ReconnectTests(unittest.TestCase):
         sender.send.side_effect=lambda pixels:(entered.set(),release.wait(2))
         session=DisplaySession()
         self.assertFalse(session.needs_frame)
-        with patch('rio_monitor.output.WinUSB'),patch('rio_monitor.output.FrameSender',return_value=sender):
+        with patch('rio_monitor.output.WinUSB') as usb,patch('rio_monitor.output.FrameSender',return_value=sender):
             output=ScreenOutput('device');session.output=output
             try:
                 frame=Image.new('RGB',(480,480))
@@ -33,6 +33,7 @@ class ReconnectTests(unittest.TestCase):
                 output.stop.set();self.assertFalse(session.needs_frame)
             finally:release.set();self.assertTrue(session.close())
         self.assertFalse(session.needs_frame)
+        usb.return_value.reset_pipes.assert_not_called()
 
     def test_missing_device_retries_with_backoff_then_connects_new_path(self):
         paths=[];created=[]
@@ -108,4 +109,33 @@ class ReconnectTests(unittest.TestCase):
                 self.assertTrue(entered.wait(1));self.assertFalse(output.finished.is_set())
             finally:release.set();self.assertTrue(output.close())
         self.assertTrue(output.finished.is_set());self.assertEqual(output.error,'device gone')
+        transport.close.assert_called_once();sender.send.assert_not_called()
+        self.assertLess(transport.mock_calls.index(unittest.mock.call.reset_pipes()),transport.mock_calls.index(unittest.mock.call.close()))
+
+    def test_timeout_clears_pipes_before_reconnect_and_frames_resume_without_replug(self):
+        entered=threading.Event();release=threading.Event();sent=threading.Event()
+        first,second=Mock(),Mock();sender1,sender2=Mock(),Mock()
+        sender1.lcd_info.side_effect=OSError('USB timeout')
+        def reset():entered.set();release.wait(2)
+        first.reset_pipes.side_effect=reset;sender2.send.side_effect=lambda pixels:sent.set()
+        enumerator=Mock(return_value=['same-device'])
+        session=DisplaySession(enumerator=enumerator)
+        with patch('rio_monitor.output.WinUSB',side_effect=[first,second]) as usb,patch('rio_monitor.output.FrameSender',side_effect=[sender1,sender2]):
+            try:
+                session.reconnect(0);failed=session.output
+                self.assertTrue(entered.wait(1));self.assertFalse(failed.finished.is_set())
+                session.reconnect(10);self.assertEqual(usb.call_count,1);self.assertEqual(enumerator.call_count,1)
+                release.set();self.assertTrue(failed.finished.wait(1));first.close.assert_called_once()
+                session.reconnect(11);self.assertEqual(enumerator.call_count,2)
+                session.submit(Image.new('RGB',(480,480)));self.assertTrue(sent.wait(1))
+                self.assertIsNone(session.output.error);self.assertEqual(usb.call_count,2)
+            finally:release.set();self.assertTrue(session.close())
+        second.reset_pipes.assert_not_called()
+
+    def test_reset_failure_preserves_original_error_and_still_closes_handle(self):
+        transport=Mock();sender=Mock();sender.lcd_info.side_effect=OSError('USB timeout')
+        transport.reset_pipes.side_effect=OSError('device removed')
+        with patch('rio_monitor.output.WinUSB',return_value=transport),patch('rio_monitor.output.FrameSender',return_value=sender):
+            output=ScreenOutput('device');self.assertTrue(output.finished.wait(1));self.assertTrue(output.close())
+        self.assertIn('USB timeout',output.error);self.assertIn('USB pipe reset failed: device removed',output.error)
         transport.close.assert_called_once();sender.send.assert_not_called()

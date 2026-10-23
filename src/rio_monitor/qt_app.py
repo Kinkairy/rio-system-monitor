@@ -12,7 +12,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtQuick import QQuickImageProvider
 from . import __version__
-from .settings import Settings,load,save,set_autostart,config_path
+from .settings import Settings,load,save,set_autostart,config_path,acquire_instance
 from .weather_source import WeatherWorker,cities,coordinates,fetch_json
 from .telemetry import Collector
 from .render_cache import Renderer
@@ -303,6 +303,8 @@ def main():
   samples=({k:Sample(v,now,'demo') for k,v in {'cpu':32,'gpu':68,'temperature':58,'ram_used':12.4,'ram_total':32,'download':24.8,'upload':1.2}.items()} if args.demo else collector.collect())
   for i in range(120):frame=renderer.render(samples,now=now+i/60)
   frame.save(args.snapshot);collector.gpu.close();return
+ instance=acquire_instance()
+ if instance is None:return 0
  QQuickStyle.setStyle('Basic')
  app=QApplication(sys.argv);app.setQuitOnLastWindowClosed(False);app.setApplicationName('RIO System Monitor');app.setApplicationVersion(__version__);app.setFont(QFont('Segoe UI',10))
  assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets';app.setWindowIcon(QIcon(str(assets/'rio-icon.ico')))

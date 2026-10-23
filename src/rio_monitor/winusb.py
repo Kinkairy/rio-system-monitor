@@ -81,6 +81,9 @@ class WinUSB:
         self.u.WinUsb_Free.argtypes=[ctypes.c_void_p]
         self.u.WinUsb_QueryPipe.argtypes=[ctypes.c_void_p,ctypes.c_ubyte,ctypes.c_ubyte,ctypes.POINTER(PipeInfo)]
         self.u.WinUsb_SetPipePolicy.argtypes=[ctypes.c_void_p,ctypes.c_ubyte,w.ULONG,w.ULONG,ctypes.c_void_p]
+        for name in ('WinUsb_ResetPipe','WinUsb_FlushPipe'):
+            getattr(self.u,name).argtypes=[ctypes.c_void_p,ctypes.c_ubyte]
+            getattr(self.u,name).restype=w.BOOL
         for name in ('WinUsb_WritePipe','WinUsb_ReadPipe'):
             getattr(self.u,name).argtypes=[ctypes.c_void_p,ctypes.c_ubyte,ctypes.c_void_p,w.ULONG,ctypes.POINTER(w.ULONG),ctypes.c_void_p]
         self.file=self.k.CreateFileW(path,0xc0000000,3,None,3,0x40000000,None)
@@ -115,6 +118,11 @@ class WinUSB:
         buf=ctypes.create_string_buffer(length);actual=w.ULONG()
         if not self.u.WinUsb_ReadPipe(self.handle,ep,buf,length,ctypes.byref(actual),None):raise ctypes.WinError(ctypes.get_last_error())
         return buf.raw[:actual.value]
+    def reset_pipes(self):
+        """Recover failed synchronous I/O before closing this worker's handle."""
+        for ep in (1,0x81):
+            if not self.u.WinUsb_ResetPipe(self.handle,ep):raise ctypes.WinError(ctypes.get_last_error())
+        if not self.u.WinUsb_FlushPipe(self.handle,0x81):raise ctypes.WinError(ctypes.get_last_error())
     def close(self):
         if self.handle.value:self.u.WinUsb_Free(self.handle);self.handle=ctypes.c_void_p()
         if self.file:self.k.CloseHandle(self.file);self.file=None

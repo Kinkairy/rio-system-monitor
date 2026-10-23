@@ -41,6 +41,22 @@ def save(s):
     p=config_path();p.parent.mkdir(parents=True,exist_ok=True)
     tmp=p.with_suffix('.tmp');tmp.write_text(json.dumps(asdict(s),ensure_ascii=False,indent=2),encoding='utf-8');tmp.replace(p)
 
+def acquire_instance():
+    """Keep one Windows GUI owner, including a running older release."""
+    if sys.platform!='win32':return True
+    import ctypes
+    kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+    kernel.CreateMutexW.argtypes=[ctypes.c_void_p,ctypes.c_int,ctypes.c_wchar_p];kernel.CreateMutexW.restype=ctypes.c_void_p
+    kernel.CloseHandle.argtypes=[ctypes.c_void_p]
+    handle=kernel.CreateMutexW(None,False,r'Local\RIO-System-Monitor')
+    if not handle:raise ctypes.WinError(ctypes.get_last_error())
+    exists=ctypes.get_last_error()==183
+    user=ctypes.WinDLL('user32',use_last_error=True)
+    user.FindWindowW.argtypes=[ctypes.c_wchar_p,ctypes.c_wchar_p];user.FindWindowW.restype=ctypes.c_void_p
+    if exists or user.FindWindowW(None,'RIO System Monitor'):
+        kernel.CloseHandle(handle);return None
+    return handle  # Windows releases the mutex handle when this process exits.
+
 def set_autostart(enabled):
     if sys.platform!='win32':
         if enabled:raise RuntimeError('Autostart is currently Windows-only')
