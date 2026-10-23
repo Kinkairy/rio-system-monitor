@@ -15,10 +15,19 @@ def source_label(app):
         if key in value:return name
     return 'MEDIA SESSION' if app else 'RIO MUSIC'
 
+def marquee_offset(width,viewport,elapsed,speed=32,pause=1):
+    distance=max(0,width-viewport)
+    if not distance:return 0
+    travel=distance/speed;phase=max(0,elapsed)%(2*(travel+pause))
+    if phase<pause:return 0
+    if phase<pause+travel:return (phase-pause)*speed
+    if phase<2*pause+travel:return distance
+    return distance-(phase-2*pause-travel)*speed
+
 class MusicRenderer:
  def __init__(self,assets):
   self.assets=Path(assets);self.columns=[Spring(damping=14) for _ in range(24)];self.level=Spring(damping=14)
-  self.current=Track();self.previous=Track();self.changed=None;self.previous_lines=('','','','');self.last_lines=self.previous_lines;self.last=None;self.angle=0;self.covers={}
+  self.current=Track();self.previous=Track();self.changed=None;self.previous_lines=('','','','');self.last_lines=self.previous_lines;self.last=None;self.angle=0;self.covers={};self.title_key=None;self.title_since=0
   self.pixel=str(self.assets/'fonts/RIOPixel-Regular.ttf')
   if not Path(self.pixel).is_file():self.pixel=str(self.assets/'fonts/Born2bSporty.otf')
   self.chinese=next((str(p) for p in [self.assets/'fonts/NotoSansCJK-Regular.ttc',Path(os.environ.get('WINDIR','C:/Windows'))/'Fonts/msyh.ttc',Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc')] if p.is_file()),self.pixel)
@@ -30,6 +39,22 @@ class MusicRenderer:
  def font(self,path,size):
   try:return ImageFont.truetype(path,size)
   except OSError:return ImageFont.load_default(size=size)
+ @lru_cache(maxsize=4)
+ def title_strip(self,text,fontpath):
+  font=self.font(fontpath,25*S);width=math.ceil(font.getlength(text))
+  strip=Image.new('RGBA',(width,38*S))
+  ImageDraw.Draw(strip).text((0,19*S),text,font=font,fill='#ebdf50',anchor='lm')
+  return strip
+ def draw_title(self,image,text,now):
+  if text!=self.title_key:self.title_key=text;self.title_since=now
+  fontpath=self.chinese if any(ord(ch)>127 for ch in text) else self.pixel
+  strip=self.title_strip(text,fontpath);viewport=310*S
+  if strip.width<=viewport:
+   image.paste(strip,((image.width-strip.width)//2,89*S),strip)
+  else:
+   offset=round(marquee_offset(strip.width,viewport,now-self.title_since,speed=32*S))
+   visible=strip.crop((offset,0,offset+viewport,strip.height))
+   image.paste(visible,(85*S,89*S),visible)
  def cover_for(self,track):
   key=(track.key,hash(track.cover))
   if key in self.covers:return self.covers[key]
@@ -131,7 +156,8 @@ class MusicRenderer:
   im.paste(badge,(143*S,58*S),badge);d=ImageDraw.Draw(im)
   tx(248,74,'MUSIC',17,'#d5e3d9',anchor='lm')
   for x,c in [(326,'#54d4d3'),(338,'#a880df')]:poly([(x,82),(x+7,70),(x+13,70),(x+6,82)],c)
-  tx(240,108,short(track.title or ('暂无歌曲' if zh else 'NO TRACK'),font,25,310),25,'#ebdf50');tx(240,131,short(track.artist or source_label(track.source),font,10,310),10,'#719c8c')
+  self.draw_title(im,track.title or ('暂无歌曲' if zh else 'NO TRACK'),now)
+  tx(240,132,short(track.artist or source_label(track.source),font,14,310),14,'#719c8c')
   # Draw the record on an independent layer for the track transition.
   base=im
   im=Image.new('RGBA',base.size);d=ImageDraw.Draw(im)

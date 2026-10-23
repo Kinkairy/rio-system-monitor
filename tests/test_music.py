@@ -1,13 +1,47 @@
 import unittest,tempfile,time,math,io
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch,AsyncMock
 from PIL import Image
 from rio_monitor.music.state import Track,Audio,Spectrum,select_session,AutomaticMusicView
 from rio_monitor.music.lyrics import parse_lrc,current_lines,lookup
 from rio_monitor.music.controller import Music
-from rio_monitor.music.renderer import MusicRenderer
+from rio_monitor.music.renderer import MusicRenderer,marquee_offset
+from rio_monitor.music.windows import CoverCache
+
+class CoverTests(unittest.IsolatedAsyncioTestCase):
+ async def test_delayed_thumbnail_retries_after_empty_and_failed_reads(self):
+  cache=CoverCache();reader=AsyncMock(side_effect=[b'',OSError('not ready'),b'cover'])
+  with patch('rio_monitor.music.windows.read_cover',reader):
+   self.assertEqual(await cache.get('song',None,100),b'')
+   self.assertEqual(await cache.get('song','thumbnail',101.9),b'')
+   self.assertEqual(reader.await_count,1)
+   self.assertEqual(await cache.get('song','thumbnail',102),b'')
+   self.assertEqual(await cache.get('song','thumbnail',104),b'cover')
+   self.assertEqual(await cache.get('song',None,110),b'cover')
+   self.assertEqual(reader.await_count,3)
+ async def test_track_change_drops_previous_cover_before_retry(self):
+  cache=CoverCache()
+  with patch('rio_monitor.music.windows.read_cover',AsyncMock(side_effect=[b'first',b'',b'second'])):
+   self.assertEqual(await cache.get('one','thumbnail',100),b'first')
+   self.assertEqual(await cache.get('two',None,100.5),b'')
+   self.assertEqual(await cache.get('two','thumbnail',102.5),b'second')
 
 class MusicTests(unittest.TestCase):
+ def test_title_scrolls_both_directions_with_pauses_and_short_titles_stay_still(self):
+  # 64 extra pixels at 32 pixels/second: hold, travel, hold, return, repeat.
+  expected={0:0,.5:0,1:0,2:32,3:64,3.5:64,4:64,5:32,6:0,6.5:0}
+  for elapsed,offset in expected.items():self.assertAlmostEqual(marquee_offset(374,310,elapsed),offset)
+  for elapsed in (0,1,100):self.assertEqual(marquee_offset(200,310,elapsed),0)
+ def test_title_render_is_clipped_and_returns_to_first_position(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   renderer=MusicRenderer(tmp);title='A LONG SONG TITLE THAT MUST SCROLL TO SHOW THE END'
+   def draw(now):
+    frame=Image.new('RGB',(480,480),'black');renderer.draw_title(frame,title,now);return frame
+   first=draw(100);moving=draw(102)
+   width=renderer.title_strip(title,renderer.pixel).width
+   returned=draw(100+2*(max(0,width-310)/32+1))
+   self.assertNotEqual(first.tobytes(),moving.tobytes());self.assertEqual(first.tobytes(),returned.tobytes())
+   self.assertIsNone(moving.crop((0,0,85,480)).getbbox());self.assertIsNone(moving.crop((395,0,480,480)).getbbox())
  def test_automatic_view_waits_30_seconds_after_pause_or_stop(self):
   from dataclasses import replace
   view=AutomaticMusicView()

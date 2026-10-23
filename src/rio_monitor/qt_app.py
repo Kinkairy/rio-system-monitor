@@ -20,6 +20,7 @@ from .storage import DisplaySession,StorageJob
 from .music.controller import Music
 from .music.renderer import MusicRenderer
 from .music.state import AutomaticMusicView
+from .view_transition import ViewTransition
 
 @lru_cache(maxsize=2)
 def preview_mask(size):
@@ -297,13 +298,14 @@ def main():
    if collector:collector.gpu.close()
  collector_worker=threading.Thread(target=collect_loop,daemon=True);collector_worker.start()
  def render_loop():
-  renderer=Renderer();music_renderer=MusicRenderer(assets);music_view=AutomaticMusicView()
+  renderer=Renderer();music_renderer=MusicRenderer(assets);music_view=AutomaticMusicView();transition=ViewTransition()
   while not stop.is_set():
    started=time.monotonic()
    if bridge.visible or session.live:
     music_state=music.snapshot()
     show_music=music_view.select(music_state,started);active_view[0]='music' if show_music else 'monitor'
     frame=music_renderer.render(music_state,language=bridge.s.language) if show_music else renderer.render(latest_samples[0],weather=weather.reading)
+    frame=transition.render(active_view[0],frame,started)
     render_times.append(time.monotonic()-started);render_count[0]+=1
     session.submit(frame.rotate(-bridge.s.rotation) if bridge.s.rotation else frame)
     if bridge.visible:
@@ -325,7 +327,7 @@ def main():
   if not args.performance_report:return
   durations=list(render_times);elapsed=time.monotonic()-run_started
   music_state=music.snapshot();track=music_state['track'];audio=music_state['audio'].current(time.monotonic())
-  report=dict(seconds=round(elapsed,3),target_render_fps=bridge.s.fps,rendered_frames=render_count[0],render_mean_ms=round(statistics.mean(durations)*1000,3) if durations else None,**session.snapshot(),temperature=monitor.snapshot(),storage=storage.snapshot(),view=active_view[0],music=dict(enabled=music_state['enabled'],status=music_state['status'],playing=track.playing,has_title=bool(track.title),session_count=len(music_state['sources']),audio_status=audio.status,audio_level=round(audio.level,3)))
+  report=dict(seconds=round(elapsed,3),target_render_fps=bridge.s.fps,rendered_frames=render_count[0],render_mean_ms=round(statistics.mean(durations)*1000,3) if durations else None,**session.snapshot(),temperature=monitor.snapshot(),storage=storage.snapshot(),view=active_view[0],music=dict(enabled=music_state['enabled'],status=music_state['status'],playing=track.playing,has_title=bool(track.title),has_cover=bool(track.cover),cover_bytes=len(track.cover),session_count=len(music_state['sources']),audio_status=audio.status,audio_level=round(audio.level,3)))
   try:args.performance_report.write_text(json.dumps(report,indent=2),encoding='utf-8')
   except OSError:pass
  report_timer=QTimer();report_timer.timeout.connect(performance_report)

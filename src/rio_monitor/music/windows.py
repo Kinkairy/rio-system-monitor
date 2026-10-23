@@ -16,6 +16,17 @@ async def read_cover(reference):
         finally:reader.close()
     finally:stream.close()
 
+class CoverCache:
+    """Retry late thumbnails without discarding a good cover for the same track."""
+    def __init__(self):self.key=None;self.data=b'';self.retry_at=0
+    async def get(self,key,reference,now):
+        if key!=self.key:self.key=key;self.data=b'';self.retry_at=0
+        if not self.data and now>=self.retry_at:
+            self.retry_at=now+2
+            try:self.data=await asyncio.wait_for(read_cover(reference),2)
+            except Exception:pass
+        return self.data
+
 class MediaSessions:
     def __init__(self,publish,preference):self.publish=publish;self.preference=preference;self.stop=threading.Event();self.thread=None
     def start(self):
@@ -30,7 +41,7 @@ class MediaSessions:
         except Exception:self.publish(Track(),[],'media_unavailable')
     async def poll(self):
         from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as Manager
-        manager=await Manager.request_async();previous='';cover_key=None;cover=b''
+        manager=await Manager.request_async();previous='';covers=CoverCache()
         while not self.stop.is_set():
             try:
                 items=[]
@@ -55,10 +66,7 @@ class MediaSessions:
                                 if 0<=delta<=5:position=min(duration,position+delta)
                     except Exception:pass
                     key=(app,props.title,props.artist,props.album_title)
-                    if key!=cover_key:
-                        cover_key=key;cover=b''
-                        try:cover=await asyncio.wait_for(read_cover(props.thumbnail),2)
-                        except Exception:pass
+                    cover=await covers.get(key,props.thumbnail,time.monotonic())
                     track=Track(app,(props.title or '')[:512],(props.artist or '')[:512],(props.album_title or '')[:512],duration,position,playing,time.monotonic(),cover)
                     if not self.stop.is_set():self.publish(track,sources,'ready')
                     previous=app
