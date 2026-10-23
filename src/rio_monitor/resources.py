@@ -74,17 +74,22 @@ class ResourceSender:
             if len(data)!=read_length:raise ProtocolError('Short resource read; no retry')
             validate_status(self.transport.read(0x81,13),self.tag,size)
             return data
-        except Exception:
-            self.faulted=True;raise
+        except Exception as exc:
+            self.faulted=True
+            if isinstance(exc,ProtocolError):
+                phase='identity query' if cdb==QUERY else 'play' if cdb==PLAY else 'erase' if cdb[1]==0xd8 else 'write'
+                raise ProtocolError(f'{phase}: {exc}') from exc
+            raise
     def verify_device(self):
         desc=self.transport.device_descriptor()
         if len(desc)!=18 or desc[:2]!=b'\x12\x01' or struct.unpack_from('<HHH',desc,8)!=(0x2a55,0x9990,0x0200):
             raise ProtocolError('Unexpected USB identity/revision; nothing erased')
         width,height,_=struct.unpack('<HHB',self.exchange(QUERY,read_length=5))
         if (width,height)!=(480,480):raise ProtocolError('Unexpected screen dimensions; nothing erased')
-    def upload(self,blob,progress=lambda phase,done,total:None):
+    def upload(self,blob,progress=lambda phase,done,total:None,before_erase=lambda:None):
         validate_blob(blob)  # All validation precedes the first erase.
         self.verify_device()
+        before_erase()
         offsets=range(0,len(blob),BLOCK);total=len(offsets)*2+1;done=0
         for phase in ('erase','write'):
             for offset in offsets:

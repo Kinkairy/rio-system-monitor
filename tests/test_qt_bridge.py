@@ -73,12 +73,7 @@ class BridgeTests(unittest.TestCase):
    self.b.requestRestoreDefault();self.b.confirmRestoreDefault(True)
    prepare.assert_called_once_with(self.b.storage.assets/'default-screen.gif',write_after=True)
    self.b.confirmRestoreDefault(True);prepare.assert_called_once()
- def test_default_preview_does_not_write_or_replace_a_selected_file(self):
-  from pathlib import Path
-  from tempfile import TemporaryDirectory
-  with TemporaryDirectory() as td, patch.object(self.b.storage,'prepare') as prepare, patch.object(self.b.storage,'write') as write:
-   self.b.storage.assets=Path(td);Image.new('RGB',(480,480)).save(Path(td)/'default-screen.gif','GIF')
-   self.b.prepareStoragePreview();prepare.assert_called_once_with(Path(td)/'default-screen.gif')
-   self.b.storage.update(name='chosen.png',ready=True);self.b.prepareStoragePreview();prepare.assert_called_once()
-   self.b.storage.update(name='',busy=True);self.b.prepareStoragePreview();prepare.assert_called_once()
-   write.assert_not_called();self.assertIsNone(self.b.storage.session.output)
+ def test_open_preview_uses_stored_content_without_preparing_default_or_writing(self):
+  with patch.object(self.b.storage,'open_preview') as opened, patch.object(self.b.storage,'prepare') as prepare, patch.object(self.b.storage,'write') as write:
+   self.b.prepareStoragePreview();opened.assert_called_once();prepare.assert_not_called();write.assert_not_called()
+   self.assertIsNone(self.b.storage.session.output)

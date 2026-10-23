@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile, threading
 from .media import prepare_media
 from .resources import ResourceSender, validate_blob
+from .stored_preview import StoredPreviewCache
 
 class DisplaySession:
     def __init__(self,mode='monitor',enumerator=None,output_factory=None,transport_factory=None):
@@ -34,7 +35,7 @@ class DisplaySession:
                 from .output import ScreenOutput
                 factory=ScreenOutput
             self.output=factory(self.one_path());self.mode='monitor';self.error=None
-    def replace(self,blob,progress):
+    def replace(self,blob,progress,before_erase=None):
         validate_blob(blob)
         with self.lock:
             if self.resource_active:raise RuntimeError('Another transfer is active')
@@ -48,8 +49,10 @@ class DisplaySession:
             if factory is None:
                 from .winusb import WinUSB
                 factory=WinUSB
-            transport=factory(self.one_path());transport.set_timeout(3000)
-            ResourceSender(transport).upload(blob,progress)
+            path=self.one_path();transport=factory(path);transport.set_timeout(3000)
+            ResourceSender(transport).upload(blob,progress,lambda:before_erase(path) if before_erase else None)
+            self.error=None
+            return path
         except Exception as exc:
             self.error=str(exc);raise
         finally:
@@ -66,15 +69,29 @@ class DisplaySession:
         with self.lock:return dict(mode=self.mode,usb_sent=self.output.sent if self.output else 0,usb_error=self.error or (self.output.error if self.output else None))
 
 class StorageJob:
-    def __init__(self,session,assets):
+    def __init__(self,session,assets,cache_dir=None):
         self.session=session;self.assets=Path(assets);self.lock=threading.RLock()
         self.temp=tempfile.TemporaryDirectory(prefix='rio-media-',ignore_cleanup_errors=True)
         self.cancel=threading.Event();self.thread=None;self.serial=0;self.prepared=None
-        self.state=dict(phase='idle',busy=False,writing=False,progress=0.0,name='',detail='',preview='',ready=False,error='')
+        self.cache=StoredPreviewCache(cache_dir) if cache_dir is not None else None
+        self.state=dict(phase='idle',busy=False,writing=False,progress=0.0,name='',detail='',preview='',ready=False,error='',preview_cache_error='')
     def snapshot(self):
         with self.lock:return dict(self.state,mode=self.session.mode)
     def update(self,**values):
         with self.lock:self.state.update(values)
+    @staticmethod
+    def detail(media):
+        return f'480 × 480 · {len(media.gif)/1_000_000:.2f} / 3.4 MB · {media.frames} frames'
+    def open_preview(self):
+        with self.lock:
+            if self.state['busy']:return False
+            self.prepared=None;stored=None
+            if self.cache:
+                try:stored=self.cache.load(self.session.one_path())
+                except (OSError,RuntimeError,ValueError):pass
+            self.update(ready=False,preview=str(stored.preview) if stored else '',
+                        name=stored.name if stored else '',detail=self.detail(stored) if stored else '')
+            return True
     def prepare(self,path,write_after=False):
         with self.lock:
             if self.state['busy']:return False
@@ -85,8 +102,7 @@ class StorageJob:
             try:
                 prepared=prepare_media(path,Path(self.temp.name)/str(self.serial),self.assets/'media/ffmpeg.exe',self.cancel.is_set)
                 self.prepared=prepared
-                detail=f'480 × 480 · {len(prepared.gif)/1_000_000:.2f} / 3.4 MB · {prepared.frames} frames'
-                self.update(phase='ready',ready=True,preview=str(prepared.preview),detail=detail)
+                self.update(phase='ready',ready=True,preview=str(prepared.preview),detail=self.detail(prepared))
                 succeeded=True
             except InterruptedError:self.update(phase='idle',error='')
             except Exception as exc:self.update(phase='error',error=str(exc))
@@ -96,11 +112,24 @@ class StorageJob:
     def write(self):
         with self.lock:
             if self.state['busy'] or not self.prepared or not self.state['ready']:return False
-            prepared=self.prepared;self.update(phase='connecting',busy=True,writing=True,ready=False,progress=0,error='')
+            prepared=self.prepared;previous_mode=self.session.mode;self.update(phase='connecting',busy=True,writing=True,ready=False,progress=0,error='',preview_cache_error='')
         def progress(phase,done,total):self.update(phase=phase,progress=done/total)
         def work():
-            try:self.session.replace(prepared.blob,progress);self.update(phase='stored',progress=1)
-            except Exception as exc:self.update(phase='error',error=str(exc))
+            try:
+                if self.cache:
+                    device=self.session.replace(prepared.blob,progress,before_erase=self.cache.invalidate)
+                else:self.session.replace(prepared.blob,progress)
+            except Exception as exc:
+                error=str(exc)
+                if previous_mode=='monitor':
+                    try:self.session.connect()
+                    except Exception as recovery:error+='; real-time recovery failed: '+str(recovery)
+                self.update(phase='error',error=error)
+            else:
+                if self.cache:
+                    try:self.cache.store(device,prepared)
+                    except OSError as exc:self.update(preview_cache_error=str(exc))
+                self.update(phase='stored',progress=1)
             finally:self.update(busy=False,writing=False)
         self.thread=threading.Thread(target=work,daemon=True);self.thread.start();return True
     def resume(self):

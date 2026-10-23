@@ -14,3 +14,7 @@ class SettingTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as d,patch.dict(os.environ,{'LOCALAPPDATA':d}):
    config_path().parent.mkdir(parents=True);config_path().write_text('{"rotation":39,"start_hidden":false}')
    self.assertTrue(load().start_hidden);self.assertEqual(load().rotation,39)
+ def test_every_launch_resumes_monitor_even_after_stored_content_mode(self):
+  with tempfile.TemporaryDirectory() as d,patch.dict(os.environ,{'LOCALAPPDATA':d}):
+   save(Settings(rotation=39,display_mode='stored'))
+   self.assertEqual(load().display_mode,'monitor');self.assertEqual(load().rotation,39)

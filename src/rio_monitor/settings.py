@@ -26,6 +26,7 @@ def load():
         if s.language not in ('en','zh') or not isinstance(s.city,str) or not isinstance(s.start_hidden,bool) or not isinstance(s.autostart,bool) or not isinstance(s.temperature_monitor,bool):raise ValueError('Invalid settings')
         if s.display_mode not in ('monitor','stored'):raise ValueError('Invalid display mode')
         s.start_hidden=True
+        s.display_mode='monitor'  # Each program launch reconnects the live display.
         return s
     except (OSError,ValueError,TypeError):return Settings()
 

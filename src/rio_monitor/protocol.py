@@ -26,7 +26,7 @@ def validate_status(raw:bytes,tag:int,transferred:int=0):
     if len(raw)!=13:raise ProtocolError('Status must be exactly 13 bytes')
     signature,got,residue,status=struct.unpack('<4sIIB',raw)
     if signature!=b'USBS':raise ProtocolError('Invalid status signature')
-    if got!=tag:raise ProtocolError('Status tag mismatch')
+    if got!=tag:raise ProtocolError(f'Status tag mismatch (expected {tag:08x}, received {got:08x}, device status {status})')
     # This firmware leaves the original transfer length in successful replies.
     # Accept that exact quirk only after the caller verifies every data byte.
     if residue not in (0,transferred):raise ProtocolError('Incomplete payload transfer')

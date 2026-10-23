@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication,QSystemTrayIcon,QMenu,QFileDialog
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtQuick import QQuickImageProvider
-from .settings import Settings,load,save,set_autostart
+from .settings import Settings,load,save,set_autostart,config_path
 from .weather_source import WeatherWorker,cities,coordinates,fetch_json
 from .telemetry import Collector
 from .render_cache import Renderer
@@ -75,9 +75,7 @@ class Bridge(QObject):
  storageStatus=Property(str,getStorageStatus,notify=changed)
  @Slot()
  def prepareStoragePreview(self):
-  state=self.storage.snapshot()
-  if not state['busy'] and not state['name'] and self.defaultAvailable:
-   self.storage.prepare(self.storage.assets/'default-screen.gif');self.changed.emit()
+  self.storage.open_preview();self.changed.emit()
  @Slot()
  def chooseStorageFile(self):
   if self.storage.snapshot()['busy']:return
@@ -239,7 +237,7 @@ def main():
  QQuickStyle.setStyle('Basic')
  app=QApplication(sys.argv);app.setQuitOnLastWindowClosed(False);app.setApplicationName('RIO System Monitor');app.setFont(QFont('Segoe UI',10))
  assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets';app.setWindowIcon(QIcon(str(assets/'rio-icon.ico')))
- settings=Settings(weather_mode='off') if args.ui_capture else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not args.ui_capture);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets);bridge=Bridge(app,settings,weather,provider,bool(args.ui_capture),monitor=monitor,storage=storage);engine=QQmlApplicationEngine();engine.addImageProvider('monitor',provider);engine.rootContext().setContextProperty('bridge',bridge);engine.load(QUrl.fromLocalFile(str(assets/'ui/Main.qml')))
+ settings=Settings(weather_mode='off') if args.ui_capture else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not args.ui_capture);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets,cache_dir=None if args.ui_capture else config_path().parent/'screen-content');bridge=Bridge(app,settings,weather,provider,bool(args.ui_capture),monitor=monitor,storage=storage);engine=QQmlApplicationEngine();engine.addImageProvider('monitor',provider);engine.rootContext().setContextProperty('bridge',bridge);engine.load(QUrl.fromLocalFile(str(assets/'ui/Main.qml')))
  if not engine.rootObjects():raise RuntimeError('Qt Quick main window failed to load')
  bridge.win=engine.rootObjects()[0];bridge.tray=QSystemTrayIcon(app.windowIcon(),app);bridge.tray.setToolTip('RIO System Monitor');bridge.updateMenu();bridge.tray.activated.connect(lambda reason:bridge.show() if reason in (QSystemTrayIcon.Trigger,QSystemTrayIcon.DoubleClick) else None)
  if not args.ui_capture:bridge.tray.show()
@@ -317,7 +315,12 @@ def main():
   def capture_city():
    bridge.win.grabWindow().save(str(args.ui_capture/'qt-city.png'))
    bridge.win.findChild(QObject,'cityPopup').setProperty('visible',False)
-   QMetaObject.invokeMethod(bridge.win.findChild(QObject,'storageButton'),'clicked');QTimer.singleShot(600,capture_storage)
+   QMetaObject.invokeMethod(bridge.win.findChild(QObject,'storageButton'),'clicked');QTimer.singleShot(150,capture_current_storage)
+  def capture_current_storage():
+   bridge.unknown_preview_proof=not storage.snapshot()['preview'] and not storage.snapshot()['name'] and not storage.snapshot()['ready']
+   bridge.win.grabWindow().save(str(args.ui_capture/'qt-storage-current.png'))
+   # Simulate choosing a file; capture mode never connects to or writes USB.
+   storage.prepare(assets/'default-screen.gif');QTimer.singleShot(600,capture_storage)
   def capture_storage():
    if storage.snapshot()['busy']:QTimer.singleShot(200,capture_storage);return
    bridge.consume();bridge.win.grabWindow().save(str(args.ui_capture/'qt-storage.png'))
@@ -326,7 +329,8 @@ def main():
     proof['storage_button_present']=bridge.win.findChild(QObject,'storageButton') is not None
     proof['local_media_preview_ready']=storage.snapshot()['ready'] and bridge.storagePreview.startswith('file:')
     proof['private_default_available']=bridge.defaultAvailable
-    proof['default_preview_loaded_on_open']=storage.snapshot()['name']=='default-screen.gif' and storage.snapshot()['ready']
+    proof['unknown_stored_preview_not_replaced_by_default']=bridge.unknown_preview_proof
+    proof['selected_file_preview_loaded']=storage.snapshot()['name']=='default-screen.gif' and storage.snapshot()['ready']
     media_popup=bridge.win.findChild(QObject,'storagePopup');city_popup=bridge.win.findChild(QObject,'cityPopup')
     proof['shared_dialog_dimensions']=media_popup.property('width')==city_popup.property('width')==280 and media_popup.property('height')==city_popup.property('height')==356
     proof['restore_icon_present']=bridge.win.findChild(QObject,'restoreDefaultButton') is not None
@@ -346,7 +350,24 @@ def main():
     (args.ui_capture/'qt-proof.json').write_text(json.dumps(proof,indent=2))
    bridge.requestRestoreDefault();QTimer.singleShot(150,capture_reset)
   def capture_reset():
-   bridge.win.grabWindow().save(str(args.ui_capture/'qt-reset-confirmation.png'));bridge.confirmRestoreDefault(False);bridge.exit()
+   bridge.win.grabWindow().save(str(args.ui_capture/'qt-reset-confirmation.png'))
+   cancel=bridge.win.findChild(QObject,'cancelDefaultButton');ok=bridge.win.findChild(QObject,'confirmDefaultButton')
+   bridge.confirmation_button_proof=cancel.property('text')=='Cancel' and ok.property('text')=='OK' and abs(cancel.property('width')-ok.property('width'))<1
+   bridge.confirmation_button_size=(cancel.property('width'),cancel.property('height'))
+   QMetaObject.invokeMethod(ok,'clicked');QTimer.singleShot(100,capture_after_reset)
+  def capture_after_reset():
+   bridge.direct_reset_proof=not bridge.defaultConfirmation and not bridge.win.findChild(QObject,'storagePopup').property('visible')
+   QMetaObject.invokeMethod(bridge.win.findChild(QObject,'weatherRefreshButton'),'clicked');QTimer.singleShot(150,capture_consent)
+  def capture_consent():
+   bridge.win.grabWindow().save(str(args.ui_capture/'qt-weather-confirmation.png'))
+   cancel=bridge.win.findChild(QObject,'cancelLocateButton');ok=bridge.win.findChild(QObject,'confirmLocateButton')
+   buttons_match=bridge.confirmation_button_proof and cancel.property('text')=='Cancel' and ok.property('text')=='OK' and abs(cancel.property('width')-ok.property('width'))<1 and (ok.property('width'),ok.property('height'))==bridge.confirmation_button_size
+   QMetaObject.invokeMethod(cancel,'clicked')
+   if args.self_test:
+    proof=json.loads((args.ui_capture/'qt-proof.json').read_text());proof.update(confirmation_buttons_shared_and_equal=buttons_match,restore_ok_does_not_open_content_window=bridge.direct_reset_proof)
+    assert buttons_match and bridge.direct_reset_proof,proof
+    (args.ui_capture/'qt-proof.json').write_text(json.dumps(proof,indent=2))
+   bridge.exit()
   QTimer.singleShot(1800,capture_main)
  result=app.exec();shutdown();return result
 if __name__=='__main__':main()

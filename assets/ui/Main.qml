@@ -22,17 +22,30 @@ ApplicationWindow {
  }
  component ActionButton: Button {
   id: b
-  property color fill: "#24282b"
+  property bool fieldStyle: false
+  property color fill: fieldStyle ? "#11171b" : "#24282b"
   property color ink: "#e5e8e9"
   property bool showOutline: true
-  property color hoverFill: fill.a === 0 ? "#303b41" : Qt.lighter(fill,1.32)
+  property color hoverFill: fieldStyle || fill.a === 0 ? "#303b41" : Qt.lighter(fill,1.32)
+  leftPadding: fieldStyle ? 12 : 6; rightPadding: fieldStyle ? 12 : 6
   hoverEnabled: true
+  opacity: enabled ? 1 : 0.42
   implicitHeight: 38
   background: Item {
    SoftShadow { objectName: "buttonShadow"; anchors.fill: parent; pressed: b.down; visible: b.fill.a>0 || b.hovered || b.down }
-   Rectangle { objectName: "buttonSurface"; anchors.fill: parent; radius: 8; color: b.down ? Qt.darker(b.hoverFill,1.18) : b.hovered ? b.hoverFill : b.fill; border.width: b.showOutline && (b.hovered || b.activeFocus) ? 1 : 0; border.color: "#a7eb52"; Behavior on color { ColorAnimation { duration: 100 } } }
+   Rectangle { objectName: "buttonSurface"; anchors.fill: parent; radius: 8; color: b.down ? Qt.darker(b.hoverFill,1.18) : b.hovered ? b.hoverFill : b.fill; border.width: b.showOutline && (b.fieldStyle || b.hovered || b.activeFocus) ? 1 : 0; border.color: b.hovered || b.activeFocus ? "#a7eb52" : "#354047"; Behavior on color { ColorAnimation { duration: 100 } } }
   }
-  contentItem: RioText { text: b.text; color: b.ink; font: b.font; style: Text.Raised; styleColor: "#66000000"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+  contentItem: RioText { text: b.text; color: b.ink; font: b.font; style: Text.Raised; styleColor: "#66000000"; horizontalAlignment: b.fieldStyle ? Text.AlignLeft : Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
+ }
+ component ConfirmationActions: RowLayout {
+  id: actions
+  signal accepted()
+  signal rejected()
+  property string cancelObjectName: ""
+  property string okObjectName: ""
+  Layout.fillWidth: true; spacing: 8
+  ActionButton { objectName: actions.cancelObjectName; Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.minimumWidth: 0; text: win.tr("Cancel","取消"); onClicked: actions.rejected() }
+  ActionButton { objectName: actions.okObjectName; Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.minimumWidth: 0; text: win.tr("OK","确定"); fill: "#a7eb52"; ink: "#17210f"; onClicked: actions.accepted() }
  }
  component RefreshButton: ActionButton {
   width: 38; text: "↻"; ink: "#a7eb52"; font.pixelSize: 22
@@ -60,6 +73,35 @@ ApplicationWindow {
   property bool highlighted: false
   SoftShadow { objectName: "fieldShadow"; anchors.fill: parent; cornerRadius: 7 }
   Rectangle { anchors.fill: parent; color: "#11171b"; radius: 7; border.color: parent.highlighted ? "#a7eb52" : "#354047"; border.width: 1 }
+ }
+ component LanguageSelector: Slider {
+  id: languageSlider
+  width: 76; height: 26; padding: 2; from: 0; to: 1; stepSize: 1; snapMode: Slider.SnapAlways
+  hoverEnabled: true; value: win.zh ? 0 : 1
+  Accessible.name: win.tr("Language","语言")
+  onMoved: bridge.setLanguage(value>=0.5 ? "en" : "zh")
+  background: Item {
+   SoftShadow { anchors.fill: parent; cornerRadius: 6 }
+   Rectangle { id: languageTrack; anchors.fill: parent; radius: 6; color: languageSlider.hovered ? "#333b40" : "#272d30"; Behavior on color { ColorAnimation { duration: 100 } }
+    gradient: Gradient {
+     GradientStop { position: 0; color: Qt.darker(languageTrack.color,1.6) }
+     GradientStop { position: 0.42; color: languageTrack.color }
+     GradientStop { position: 1; color: Qt.lighter(languageTrack.color,1.08) }
+    }
+    Rectangle { x: 1; y: 1; width: parent.width-2; height: parent.height-2; radius: 5; color: "transparent"; border.width: 1; border.color: "#33000000" }
+   }
+  }
+  handle: Item {
+   z: 2
+   x: languageSlider.leftPadding+languageSlider.visualPosition*(languageSlider.availableWidth-width)
+   y: languageSlider.topPadding; width: 35; height: 22
+   Behavior on x { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+   SoftShadow { anchors.fill: parent; cornerRadius: 4 }
+   Rectangle { anchors.fill: parent; radius: 4; color: languageSlider.pressed ? "#fff07e" : languageSlider.hovered ? "#ffea61" : "#ffdf32" }
+  }
+  Row { anchors.fill: parent; z: 1
+   Repeater { model: ["EN","CN"]; delegate: RioText { required property string modelData; width: 38; height: 26; text: modelData; color: "#a7eb52"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } }
+  }
  }
  component RioSwitch: Switch {
   id: sw
@@ -91,15 +133,7 @@ ApplicationWindow {
    DragHandler { target: null; onActiveChanged: if(active) win.startSystemMove() }
    Image { x: 20; y: 22; width: 76; height: 25; source: "../rio-brand.png"; fillMode: Image.PreserveAspectFit; sourceClipRect: Qt.rect(8,88,240,80) }
    RioText { x: 109; y: 24; text: win.tr("Settings","设置"); color: "#e9edef"; font.pixelSize: 17 }
-   Rectangle {
-    x: 292; y: 23; width: 76; height: 26; radius: 6; color: "#272d30"
-    SoftShadow { anchors.fill: parent; cornerRadius: 6; z: -1 }
-    Item { x: win.zh ? 39 : 2; y: 2; width: 35; height: 22; Behavior on x { NumberAnimation { duration: 140 } }
-     SoftShadow { anchors.fill: parent; cornerRadius: 4 }
-     Rectangle { anchors.fill: parent; radius: 4; color: "#ffdf32" }
-    }
-    Row { anchors.fill: parent; Repeater { model: ["EN","CN"]; delegate: ActionButton { required property string modelData; required property int index; width: 38; height: 26; text: modelData; fill: "transparent"; showOutline: false; hoverFill: (win.zh === (index===1)) ? "#ffed7c" : "#414c52"; ink: (win.zh === (index===1)) ? "#161a10" : "#d0d8dd"; font.pixelSize: 10; onClicked: bridge.setLanguage(index===1 ? "zh":"en") } } }
-   }
+   LanguageSelector { objectName: "languageSelector"; x: 292; y: 23 }
    CloseButton { objectName: "settingsCloseButton"; x: 377; y: 20; onClicked: bridge.hideWindow() }
   }
   Rectangle { x: 20; y: 65; width: 380; height: 1; color: "#292f32" }
@@ -118,7 +152,7 @@ ApplicationWindow {
   ActionButton { x: 20; y: 306; width: 332; text: bridge.cityLabel || win.tr("Select city","选择城市"); onClicked: { cityPopup.open(); searchField.forceActiveFocus() } }
   RefreshButton { objectName: "weatherRefreshButton"; x: 362; y: 306; onClicked: consentPopup.open() }
   RioText { x: 24; y: 365; text: win.tr("Screen content","屏幕内容"); color: "#dce3e6" }
-  ActionButton { objectName: "storageButton"; x: 20; y: 390; width: 332; text: bridge.storageStored ? win.tr("Stored content · Manage","屏内内容 · 管理") : win.tr("Video or image · Up to 3.4 MB","视频或图片 · 不超过 3.4 MB"); onClicked: storagePopup.open() }
+  ActionButton { objectName: "storageButton"; x: 20; y: 390; width: 332; text: bridge.storageBusy ? bridge.storageStatus : bridge.storageError ? win.tr("Operation failed · Choose content again","操作失败 · 请重新选择内容") : bridge.storageStored ? win.tr("Stored content · Manage","屏内内容 · 管理") : win.tr("Video or image · Up to 3.4 MB","视频或图片 · 不超过 3.4 MB"); onClicked: storagePopup.open() }
   RefreshButton { objectName: "restoreDefaultButton"; x: 362; y: 390; enabled: bridge.defaultAvailable && !bridge.storageBusy; Accessible.name: win.tr("Restore default","恢复默认"); ToolTip.visible: hovered; ToolTip.text: win.tr("Restore default","恢复默认"); onClicked: bridge.requestRestoreDefault() }
   RioText { x: 24; y: 445; text: win.tr("Temperature monitoring","温度监控"); color: "#dce3e6" }
   RioText { x: 24; y: 464; width: 318; text: bridge.monitorStatus; color: "#89979f"; font.pixelSize: 10; elide: Text.ElideRight }
@@ -128,7 +162,7 @@ ApplicationWindow {
   Rectangle { x: 20; y: 530; width: 380; height: 1; color: "#292f32" }
   RioText { x: 24; y: 561; text: "Your system. At a glance."; color: "#899398"; font.pixelSize: 10 }
   Row {
-   id: temperatureLoading; objectName: "temperatureLoading"; x: (parent.width-width)/2; y: 563; spacing: 7; visible: bridge.monitorBusy
+   id: temperatureLoading; objectName: "temperatureLoading"; x: (parent.width-width)/2; y: 563; spacing: 7; visible: bridge.monitorBusy || bridge.storageBusy
    Repeater {
     model: 3
     delegate: Rectangle {
@@ -154,10 +188,8 @@ ApplicationWindow {
    anchors.fill: parent; spacing: 14
    RowLayout { Layout.fillWidth: true; RioText { text: win.tr("Screen content","屏幕内容"); color: "#edf0f2"; font.pixelSize: 17; Layout.fillWidth: true } CloseButton { objectName: "storageCloseButton"; Layout.preferredWidth: 26; enabled: !bridge.storageWriting; onClicked: storagePopup.close() } }
    ActionButton {
-    id: storageFileButton; objectName: "chooseStorageButton"; Layout.fillWidth: true; implicitHeight: 40; leftPadding: 12; rightPadding: 12
+    id: storageFileButton; objectName: "chooseStorageButton"; Layout.fillWidth: true; implicitHeight: 40; fieldStyle: true
     text: win.tr("Choose file","选择文件"); enabled: !bridge.storageBusy; onClicked: bridge.chooseStorageFile()
-    background: FieldSurface { highlighted: storageFileButton.activeFocus || storageFileButton.hovered }
-    contentItem: RioText { text: storageFileButton.text; color: "#edf0f2"; font: storageFileButton.font; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
    }
    Item {
     id: storagePreviewArea; Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 80; clip: true
@@ -166,13 +198,12 @@ ApplicationWindow {
      anchors.centerIn: parent; width: parent.width; spacing: 4
      Item { anchors.horizontalCenter: parent.horizontalCenter; width: storagePreviewArea.previewSide; height: width
       AnimatedImage { anchors.fill: parent; source: bridge.storagePreview; playing: storagePopup.visible; fillMode: Image.PreserveAspectFit; visible: source.toString() !== "" }
-      RioText { anchors.centerIn: parent; width: parent.width; wrapMode: Text.WordWrap; text: win.tr("Preview your video or image","预览视频或图片"); color: "#819099"; horizontalAlignment: Text.AlignHCenter; visible: bridge.storagePreview === "" }
+      RioText { anchors.centerIn: parent; width: parent.width; wrapMode: Text.WordWrap; text: win.tr("Stored preview unavailable","暂无屏内内容预览"); color: "#819099"; horizontalAlignment: Text.AlignHCenter; visible: bridge.storagePreview === "" }
      }
-     RioText { id: storageFilename; width: parent.width; text: bridge.storageName || win.tr("No file selected","尚未选择文件"); color: "#edf0f2"; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
-     RioText { id: storageFileInfo; width: parent.width; text: bridge.storageDetail || win.tr("Up to 3.4 MB · Fits 480 × 480 · No audio","不超过 3.4 MB · 自动适配 480 × 480 · 无声"); color: "#91a0a9"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap }
+     RioText { id: storageFilename; width: parent.width; text: bridge.storageName; color: "#edf0f2"; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; elide: Text.ElideRight }
+     RioText { id: storageFileInfo; width: parent.width; text: bridge.storageDetail; color: "#91a0a9"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap }
     }
    }
-   RioText { visible: bridge.storageBusy || bridge.storageError; Layout.fillWidth: true; Layout.preferredHeight: 26; wrapMode: Text.WordWrap; text: bridge.storageStatus; color: "#d4e0e5"; font.pixelSize: 11 }
    ProgressBar { visible: bridge.storageWriting; Layout.fillWidth: true; from: 0; to: 1; value: bridge.storageProgress
     background: Rectangle { implicitHeight: 4; color: "#354047"; radius: 2 }
     contentItem: Item { implicitHeight: 4; Rectangle { width: parent.width*(bridge.storageBusy && !bridge.storageWriting ? 0.3 : bridge.storageProgress); height: 4; radius: 2; color: "#a7eb52" } }
@@ -180,17 +211,12 @@ ApplicationWindow {
    ActionButton { objectName: "writeStorageButton"; Layout.fillWidth: true; text: bridge.storageWriting ? Math.round(bridge.storageProgress*100)+"%" : win.tr("Write","写入"); fill: "#a7eb52"; ink: "#17210f"; enabled: bridge.storageReady && !bridge.storageBusy; onClicked: bridge.writeStorage() }
   }
  }
- Popup {
-  id: resetConfirmation; objectName: "resetConfirmation"; popupType: Popup.Item; parent: Overlay.overlay; x: (win.width-width)/2; y: (win.height-height)/2; width: 232; height: 136; modal: true; focus: true; padding: 18; visible: bridge.defaultConfirmation
+ DialogPopup {
+  id: resetConfirmation; objectName: "resetConfirmation"; height: 136; visible: bridge.defaultConfirmation
   onClosed: if(bridge.defaultConfirmation) bridge.confirmRestoreDefault(false)
-  background: Rectangle { color: "#1a2024"; radius: 12; border.color: "#354047" }
-  Overlay.modal: Rectangle { color: "#99080a0c" }
   ColumnLayout { anchors.fill: parent; spacing: 12
    RioText { Layout.fillWidth: true; Layout.fillHeight: true; verticalAlignment: Text.AlignVCenter; text: win.tr("Restore default?","恢复默认动画？"); color: "#edf0f2"; font.pixelSize: 16 }
-   RowLayout { Layout.fillWidth: true; spacing: 8
-    ActionButton { objectName: "cancelDefaultButton"; Layout.fillWidth: true; text: win.tr("Cancel","取消"); onClicked: bridge.confirmRestoreDefault(false) }
-    ActionButton { objectName: "confirmDefaultButton"; Layout.fillWidth: true; text: win.tr("OK","确定"); fill: "#a7eb52"; ink: "#17210f"; onClicked: { bridge.confirmRestoreDefault(true); storagePopup.open() } }
-   }
+   ConfirmationActions { cancelObjectName: "cancelDefaultButton"; okObjectName: "confirmDefaultButton"; onRejected: bridge.confirmRestoreDefault(false); onAccepted: bridge.confirmRestoreDefault(true) }
   }
  }
  DialogPopup {
@@ -205,14 +231,9 @@ ApplicationWindow {
    }
    ListView {
     Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 5; model: bridge.cityResults
-    delegate: ItemDelegate {
-     hoverEnabled: true
+    delegate: ActionButton {
      required property var modelData; required property int index
-     width: ListView.view.width; height: 48
-     background: Item {
-      SoftShadow { anchors.fill: parent; cornerRadius: 7; pressed: parent.parent.down }
-      Rectangle { anchors.fill: parent; color: parent.parent.hovered ? "#303b3f" : "#242d32"; radius: 7 }
-     }
+     width: ListView.view.width; height: 48; text: modelData.name
      contentItem: Column { RioText { text: modelData.name; color: "#e4e9eb"; font.pixelSize: 13 } RioText { text: modelData.detail; color: "#8e9ca4"; font.pixelSize: 10; elide: Text.ElideRight; width: parent.width } }
      onClicked: { bridge.selectCity(index); cityPopup.close() }
     }
@@ -221,13 +242,12 @@ ApplicationWindow {
    ActionButton { Layout.fillWidth: true; text: win.tr("Search","搜索"); fill: "#a7eb52"; ink: "#17210f"; enabled: !bridge.searchBusy; onClicked: bridge.searchCities(searchField.text) }
   }
  }
- Popup {
-  id: consentPopup; popupType: Popup.Item; parent: Overlay.overlay; x: (win.width-width)/2; y: (win.height-height)/2; width: 366; height: 232; modal: true; focus: true; padding: 20
-  background: Rectangle { color: "#1a2024"; radius: 12; border.color: "#354047" }
+ DialogPopup {
+  id: consentPopup; objectName: "consentPopup"; height: 232
   ColumnLayout { anchors.fill: parent; spacing: 14
    RioText { text: win.tr("Locate your city","自动定位城市"); color: "#edf0f2"; font.pixelSize: 17 }
    RioText { Layout.fillWidth: true; Layout.fillHeight: true; wrapMode: Text.WordWrap; text: win.tr("Use ipwho.is to estimate your city from your public IP, and send approximate coordinates to Open-Meteo for weather.","使用 ipwho.is 根据公网 IP 估算城市，并将大致坐标发送给 Open-Meteo 获取天气。"); color: "#b2bdc4"; font.pixelSize: 13 }
-   RowLayout { Layout.fillWidth: true; ActionButton { Layout.fillWidth: true; text: win.tr("Cancel","取消"); onClicked: consentPopup.close() } ActionButton { Layout.fillWidth: true; fill: "#a7eb52"; ink: "#17210f"; text: win.tr("Continue","继续"); onClicked: {consentPopup.close();bridge.locateCity()} } }
+   ConfirmationActions { cancelObjectName: "cancelLocateButton"; okObjectName: "confirmLocateButton"; onRejected: consentPopup.close(); onAccepted: { consentPopup.close(); bridge.locateCity() } }
   }
  }
  Popup { id: notice; popupType: Popup.Item; parent: Overlay.overlay; x: (win.width-width)/2; y: (win.height-height)/2; width: 366; height: 190; modal: true; padding: 20
