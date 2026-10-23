@@ -1,6 +1,6 @@
 """Single USB owner and explicit background preparation/resource replacement."""
 from pathlib import Path
-import tempfile, threading
+import tempfile, threading, time
 from .media import prepare_media
 from .resources import ResourceSender, validate_blob
 from .stored_preview import StoredPreviewCache
@@ -9,6 +9,32 @@ class DisplaySession:
     def __init__(self,mode='monitor',enumerator=None,output_factory=None,transport_factory=None):
         self.mode=mode;self.lock=threading.RLock();self.output=None;self.retiring=None;self.error=None
         self.resource_active=False;self._enumerator=enumerator;self._output_factory=output_factory;self._transport_factory=transport_factory
+        self.stop=threading.Event();self.thread=None;self.retry_at=0;self.retry_delay=1;self.connection_attempts=0
+    def start(self):
+        with self.lock:
+            if self.stop.is_set():return
+            if self.thread and self.thread.is_alive():return
+            self.thread=threading.Thread(target=self.maintain,daemon=True,name='RIO-USB-reconnect');self.thread.start()
+    def maintain(self):
+        while not self.stop.is_set():
+            self.reconnect()
+            self.stop.wait(.2)
+    def reconnect(self,now=None):
+        now=time.monotonic() if now is None else now
+        with self.lock:
+            if self.stop.is_set() or self.mode!='monitor' or self.resource_active:return
+            output=self.output
+            if output and not output.error and not output.finished.is_set():
+                if output.sent:self.retry_delay=1;self.retry_at=0
+                return
+            # The failed worker must finish freeing WinUSB before another handle opens.
+            if output and not output.finished.is_set():return
+            if self.retiring and not self.retiring.finished.is_set():return
+            if now<self.retry_at:return
+            self.connection_attempts+=1
+            try:self.connect()
+            except Exception as exc:self.error=str(exc)
+            self.retry_at=now+self.retry_delay;self.retry_delay=min(5,self.retry_delay*2)
     def paths(self):
         if self._enumerator:return self._enumerator()
         from .winusb import enumerate_paths
@@ -25,8 +51,12 @@ class DisplaySession:
             if self.output and not self.output.error:self.output.submit(frame)
     def connect(self):
         with self.lock:
+            if self.stop.is_set():raise RuntimeError('Display session is closed')
             if self.resource_active:raise RuntimeError('Resource transfer is active')
-            if self.retiring and not self.retiring.close():raise RuntimeError('Previous USB writer has not stopped')
+            self.mode='monitor'  # Keep retrying if a requested live recovery finds no device yet.
+            if self.retiring:
+                if not self.retiring.close():raise RuntimeError('Previous USB writer has not stopped')
+                self.retiring=None
             if self.output:
                 if not self.output.close():raise RuntimeError('Previous USB writer has not stopped')
                 self.output=None
@@ -38,6 +68,7 @@ class DisplaySession:
     def replace(self,blob,progress,before_erase=None):
         validate_blob(blob)
         with self.lock:
+            if self.stop.is_set():raise RuntimeError('Display session is closed')
             if self.resource_active:raise RuntimeError('Another transfer is active')
             self.resource_active=True;self.mode='stored';self.retiring=self.output;self.output=None
         transport=None
@@ -61,12 +92,17 @@ class DisplaySession:
     def close(self):
         with self.lock:
             if self.resource_active:return False
+            self.stop.set();worker=self.thread
+        if worker:
+            worker.join(5)
+            if worker.is_alive():return False
+        with self.lock:
             for output in (self.output,self.retiring):
                 if output and not output.close():return False
             self.output=self.retiring=None
             return True
     def snapshot(self):
-        with self.lock:return dict(mode=self.mode,usb_sent=self.output.sent if self.output else 0,usb_error=self.error or (self.output.error if self.output else None))
+        with self.lock:return dict(mode=self.mode,usb_sent=self.output.sent if self.output else 0,usb_error=self.error or (self.output.error if self.output else None),usb_connection_attempts=self.connection_attempts,usb_auto_reconnect=bool(self.thread and self.thread.is_alive() and self.mode=='monitor' and not self.stop.is_set()))
 
 class StorageJob:
     def __init__(self,session,assets,cache_dir=None):

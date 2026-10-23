@@ -5,6 +5,7 @@ class ScreenOutput:
     """Latest-frame queue; never pile up or retry an uncertain USB operation."""
     def __init__(self,path):
         self.path=path;self.frames=queue.Queue(maxsize=1);self.stop=threading.Event()
+        self.finished=threading.Event()
         self.error=None;self.sent=0;self.thread=threading.Thread(target=self.run,daemon=True);self.thread.start()
     def submit(self,image):
         if self.stop.is_set():return
@@ -23,7 +24,9 @@ class ScreenOutput:
                 sender.send(encode_rgb565(image));self.sent+=1
         except Exception as exc:self.error=str(exc);self.stop.set()
         finally:
-            if transport:transport.close()
+            try:
+                if transport:transport.close()
+            finally:self.finished.set()
     def close(self):
         self.stop.set();self.thread.join(timeout=5)
         return not self.thread.is_alive()

@@ -339,11 +339,7 @@ def main():
   if not session.close():return False
   worker.join(2);collector_worker.join(2);return not worker.is_alive() and not collector_worker.is_alive()
  bridge.shutdown=shutdown
- def connect():
-  try:
-   if settings.display_mode=='monitor':session.connect()
-  except Exception as exc:bridge.tell('USB: '+str(exc))
- if not args.ui_capture:QTimer.singleShot(500,connect)
+ if not args.ui_capture:QTimer.singleShot(500,session.start)
  if args.ui_capture:
   args.ui_capture.mkdir(parents=True,exist_ok=True)
   def capture_main():
