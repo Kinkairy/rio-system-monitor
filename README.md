@@ -4,7 +4,7 @@
 
 ## 当前版本与目录
 
-当前版本为 **rc0.1.7**，可从 [GitHub Release](https://github.com/Kinkairy/rio-system-monitor/releases/tag/rc0.1.7) 下载完整程序。保留 `rc0.1` 标签作为原有基准。本版继承减少托盘无用绘制、缩小温度环缓存和释放已拆分图集的 CPU/内存优化；结果与验证边界见[性能说明](docs/performance.md)。源码入口支持 `python launch.py --version`，托盘提示显示版本号。
+当前版本为 **rc0.1.8**，可从 [GitHub Release](https://github.com/Kinkairy/rio-system-monitor/releases/tag/rc0.1.8) 下载完整程序。保留 `rc0.1` 标签作为原有基准。本版继承减少托盘无用绘制、缩小温度环缓存和释放已拆分图集的 CPU/内存优化；结果与验证边界见[性能说明](docs/performance.md)。源码入口支持 `python launch.py --version`，托盘提示仅显示 RIO System Monitor。
 
 当前版本包含歌词修正：移除不稳定的 QQ 桌面搜索，兼容歌手显示别名；先查播放器自身接口，获取不到再并发查询其他 QQ/网易云/酷狗/LRCLIB 接口，先取得有效同步歌词的先显示。歌名区域缩为居中的 240px，超出后往返滚动，避免遮住侧边仪表。`rc0.1` 标签保留为原有基准。修正与验证记录见[音乐模式说明](docs/music-mode.md#fix-20261023-qq-lyrics-failed-online-lyric-lookup)。
 
@@ -21,6 +21,12 @@
 源码仓库只维护源码、文档和构建配置。2026-10-23 主人明确允许公开发布完整 EXE，因此可在 GitHub Release 中发布含素材的完整程序；素材原文件仍留在私有仓库，不进入公开源码 Git。CI 只检查源码，不上传素材、预览或中间构建产物。清理旧构建时保留当前程序、私有输入、配置和必要构建依赖。
 
 ## 自动更新（AUTOUPDATE-20261023）
+
+### 托盘提示去除版本号（TOOLTIP-20261023，2026-10-23）
+
+用户要求截图中的托盘悬停提示不带版本号。实现前源码为干净的 `3ba73b196f91527b7b4d5f4c67476b79999bc1ea`，运行程序为已验收的 rc0.1.7；沿用原 rc0.1 恢复标签及同范围发布授权。仅将已有 QSystemTrayIcon 提示改为固定的 `RIO System Monitor`，设置页版本和命令行版本保留；递增发布 rc0.1.8，不新增组件、依赖或测试。验收只核对该行差异、最终包内提示和既有自动更新交付。AMF `project_show(rio-system-monitor)` 仍返回 `not_found: The requested project has not been registered in AMF.`，继续沿用本记录，不声称已在 AMF 登记。
+
+结果：Windows 编译完成；直接核对最终 EXE 中的调用，传入提示的固定文本为 `RIO System Monitor`，没有拼接版本号，包内 QML 与原界面一致。最终差异仅为这处文字、发布版本和本说明，公开源码边界及差异检查通过。EXE 108,660,265 字节，SHA-256 `183069eb6c0ab01c67a41bc84e4646b12edd06571be547b04735ba23496b2d5e`。运行中的 rc0.1.7 通过已有 Check updates 入口升级后生效，桌面悬停效果待实际更新后确认。
 
 ### 自动完成替换与重启（AUTOUPDATE-20261023-LIVE，2026-10-23 追加）
 
