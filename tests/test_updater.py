@@ -76,9 +76,11 @@ class UpdateTests(unittest.TestCase):
    content=staged.read_bytes()
    powershell=Path(os.environ['SYSTEMROOT'])/'System32/WindowsPowerShell/v1.0/powershell.exe'
    child=subprocess.Popen([str(powershell),'-NoProfile','-NonInteractive','-Command','Start-Sleep -Milliseconds 1200'],creationflags=subprocess.CREATE_NO_WINDOW)
+   expired=subprocess.Popen([str(powershell),'-NoProfile','-NonInteractive','-Command','exit 0'],creationflags=subprocess.CREATE_NO_WINDOW)
+   expired.wait(5)
    helper=None
    try:
-    helper=launch_install(staged,target,root/'updates','rc0.1.2',[child.pid])
+    helper=launch_install(staged,target,root/'updates','rc0.1.2',[child.pid,expired.pid])
     self.assertEqual(target.read_bytes(),b'old program');child.wait(5);self.assertEqual(helper.wait(10),0)
     self.assertEqual(target.read_bytes(),content);self.assertFalse(staged.exists())
     self.assertEqual(json.loads((root/'updates/status.json').read_text(encoding='utf-8-sig'))['status'],'installed')

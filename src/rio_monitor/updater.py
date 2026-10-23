@@ -58,9 +58,8 @@ $ErrorActionPreference='Stop'
 $data=Get-Content -LiteralPath $Plan -Raw -Encoding UTF8 | ConvertFrom-Json
 try {
     foreach ($processId in $data.wait_pids) {
-        if (Get-Process -Id $processId -ErrorAction SilentlyContinue) {
-            Wait-Process -Id $processId -Timeout 60 -ErrorAction Stop
-        }
+        Wait-Process -Id $processId -Timeout 60 -ErrorAction SilentlyContinue
+        if (Get-Process -Id $processId -ErrorAction SilentlyContinue) { throw 'RIO process did not exit' }
     }
     $target=[IO.Path]::GetFullPath([string]$data.target)
     $staged=[IO.Path]::GetFullPath([string]$data.staged)
