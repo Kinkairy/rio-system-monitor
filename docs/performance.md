@@ -1,5 +1,21 @@
 # Rendering efficiency checks
 
+## REL-20261023-RC01: version and artifact cleanup
+
+Owner request on 2026-10-23: designate the current optimized version as `rc0.1`, remove superseded build products, keep the source tree clean and understandable, and update the public repository without private assets. Starting source: clean commit `a31fbf89e1346961d86ddbc0edb7a660661c1644`, matching public `main`. Existing Git history and private asset inputs remain the recovery material.
+
+Planned scope: add one package version used by the application and `--version`, document the existing source layout, and tag the verified source as `rc0.1`. Retain a matching local executable before deleting obsolete project build directories, duplicate executables and generated debug caches. Preserve private assets, build dependencies, source snapshots, unique device evidence, configuration and the running application. No application behavior or architecture change is intended.
+
+Acceptance: verify the version in source and packaged entrypoints, reuse the existing functional validation for unchanged behavior, check private inputs and the source-only public boundary, inspect the exact cleanup targets and final diff, and read back public `main` and the `rc0.1` tag. AMF `project_show(rio-system-monitor)` still returns `not_found`; this local record does not claim a successful AMF registration.
+
+### Results
+
+The package declares `rc0.1`; the application version, tray tooltip and source `--version` use that value. The existing directory layout is now documented in README without moving or redesigning modules. The final tracked change covers only README, this document, the package version and Qt version presentation.
+
+The 14 existing entrypoint/bridge tests passed; the earlier 157-test functional run remains the validation for the unchanged rendering/output logic. The Windows build passed, the executable's embedded package version was verified as `rc0.1`, and the packaged self-test exited 0 with all assertions true and empty stderr. The retained local executable is `RIO-System-Monitor-rc0.1.exe`, 108646982 bytes, SHA-256 `04f5d5a48083c2eaac88c94ace3a8ecce3438da92d4bc85ec15ab258432b0c8a`; the delivery and Downloads copies matched before cleanup.
+
+Cleanup removed 524 superseded build/cache files totaling 2362789167 bytes. This includes old EXE copies, two obsolete packaged-build ZIPs, generated build/dist directories, bytecode caches and superseded local capture/export files. The exact targets were checked and absence was verified afterward. Source snapshots/history, private asset inputs, build dependencies, device evidence, user configuration and the running optimized program were retained. Private asset verification and the public source-only check passed after cleanup. The current source tree contains no build/dist output or bytecode cache.
+
 ## PERF-20261023-CPU-MEMORY: CPU and memory follow-up
 
 Owner request: reduce CPU and memory usage without unnecessary redesign. Base: `9379afadd50367d9426439d30d5f30516c3d150a`; the clean local checkout and previously delivered executable remain recoverable.

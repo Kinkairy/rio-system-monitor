@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication,QSystemTrayIcon,QMenu,QFileDialog
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtQuick import QQuickImageProvider
+from . import __version__
 from .settings import Settings,load,save,set_autostart,config_path
 from .weather_source import WeatherWorker,cities,coordinates,fetch_json
 from .telemetry import Collector
@@ -267,7 +268,7 @@ class Bridge(QObject):
    self.changed.emit()
 
 def main():
- parser=argparse.ArgumentParser();parser.add_argument('--ui-capture',type=Path);parser.add_argument('--snapshot',type=Path);parser.add_argument('--demo',action='store_true');parser.add_argument('--self-test',action='store_true');parser.add_argument('--show-settings',action='store_true');parser.add_argument('--show-content',action='store_true');parser.add_argument('--performance-report',type=Path);args=parser.parse_args()
+ parser=argparse.ArgumentParser();parser.add_argument('--version',action='version',version='RIO System Monitor '+__version__);parser.add_argument('--ui-capture',type=Path);parser.add_argument('--snapshot',type=Path);parser.add_argument('--demo',action='store_true');parser.add_argument('--self-test',action='store_true');parser.add_argument('--show-settings',action='store_true');parser.add_argument('--show-content',action='store_true');parser.add_argument('--performance-report',type=Path);args=parser.parse_args()
  if args.snapshot:
   from .model import Sample
   renderer=Renderer();collector=Collector();now=time.monotonic()
@@ -275,11 +276,11 @@ def main():
   for i in range(120):frame=renderer.render(samples,now=now+i/60)
   frame.save(args.snapshot);collector.gpu.close();return
  QQuickStyle.setStyle('Basic')
- app=QApplication(sys.argv);app.setQuitOnLastWindowClosed(False);app.setApplicationName('RIO System Monitor');app.setFont(QFont('Segoe UI',10))
+ app=QApplication(sys.argv);app.setQuitOnLastWindowClosed(False);app.setApplicationName('RIO System Monitor');app.setApplicationVersion(__version__);app.setFont(QFont('Segoe UI',10))
  assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets';app.setWindowIcon(QIcon(str(assets/'rio-icon.ico')))
  settings=Settings(weather_mode='off') if args.ui_capture else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not args.ui_capture);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets,cache_dir=None if args.ui_capture else config_path().parent/'screen-content');music=Music(config_path().parent/'lyrics',settings.music_enabled,settings.music_online_lyrics,settings.music_source,start=not args.ui_capture);bridge=Bridge(app,settings,weather,provider,bool(args.ui_capture),monitor=monitor,storage=storage,music=music);engine=QQmlApplicationEngine();engine.addImageProvider('monitor',provider);engine.rootContext().setContextProperty('bridge',bridge);engine.load(QUrl.fromLocalFile(str(assets/'ui/Main.qml')))
  if not engine.rootObjects():raise RuntimeError('Qt Quick main window failed to load')
- bridge.win=engine.rootObjects()[0];bridge.tray=QSystemTrayIcon(app.windowIcon(),app);bridge.tray.setToolTip('RIO System Monitor');bridge.updateMenu();bridge.tray.activated.connect(bridge.trayActivated)
+ bridge.win=engine.rootObjects()[0];bridge.tray=QSystemTrayIcon(app.windowIcon(),app);bridge.tray.setToolTip('RIO System Monitor '+__version__);bridge.updateMenu();bridge.tray.activated.connect(bridge.trayActivated)
  if not args.ui_capture:bridge.tray.show()
  if not args.ui_capture and not (args.show_settings or args.show_content):QTimer.singleShot(0,bridge.hideWindow)
  if args.show_content:
