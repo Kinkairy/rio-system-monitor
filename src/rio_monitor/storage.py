@@ -46,6 +46,9 @@ class DisplaySession:
     @property
     def live(self):
         with self.lock:return self.output is not None and not self.output.error
+    @property
+    def needs_frame(self):
+        with self.lock:return self.output is not None and not self.output.error and self.output.needs_frame
     def submit(self,frame):
         with self.lock:
             if self.output and not self.output.error:self.output.submit(frame)

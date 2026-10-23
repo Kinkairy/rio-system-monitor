@@ -34,13 +34,15 @@ class TemperatureHistoryTests(unittest.TestCase):
 
     def test_missing_arc_cells_are_restored_without_changing_original_mask(self):
         original=Image.open(self.renderer.assets/'gauge-mask.png').convert('L')
+        x,y,_,_=self.renderer.gauge_box
         for point in ((1069,287),(1092,323)):
             self.assertEqual(original.getpixel(point),0)
-            self.assertGreater(self.renderer.gauge_mask.getpixel(point),200)
-        self.assertEqual(self.renderer.gauge_mask.getpixel((184,287)),original.getpixel((184,287)))
+            self.assertGreater(self.renderer.gauge_mask.getpixel((point[0]-x,point[1]-y)),200)
+        self.assertEqual(self.renderer.gauge_mask.getpixel((184-x,287-y)),original.getpixel((184,287)))
 
     def test_complete_mask_is_left_unchanged(self):
-        self.assertIsNone(ImageChops.difference(complete_gauge_mask(self.renderer.gauge_mask),self.renderer.gauge_mask).getbbox())
+        mask=complete_gauge_mask(Image.open(self.renderer.assets/'gauge-mask.png').convert('L'))
+        self.assertIsNone(ImageChops.difference(complete_gauge_mask(mask),mask).getbbox())
 
 
 if __name__=='__main__':unittest.main()

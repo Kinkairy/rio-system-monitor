@@ -93,9 +93,10 @@ def bubble(t):
 
 class RobotAnimator:
     def __init__(self, assets, rng=None):
-        self.atlas = Image.open(assets/'robot-turn-atlas.png').convert('RGBA')
+        with Image.open(assets/'robot-turn-atlas.png') as source:
+            atlas = source.convert('RGBA')
         self.meta = json.loads((assets/'robot-turn.json').read_text())
-        self.tiles = [self.atlas.crop(((i%8)*128,(i//8)*96,(i%8+1)*128,(i//8+1)*96)) for i in range(62)]
+        self.tiles = [atlas.crop(((i%8)*128,(i//8)*96,(i%8+1)*128,(i//8+1)*96)) for i in range(62)]
         self.rng = rng or random.Random()
         self.started = None
         self.next_bubble = None

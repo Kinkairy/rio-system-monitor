@@ -7,6 +7,9 @@ class ScreenOutput:
         self.path=path;self.frames=queue.Queue(maxsize=1);self.stop=threading.Event()
         self.finished=threading.Event()
         self.error=None;self.sent=0;self.thread=threading.Thread(target=self.run,daemon=True);self.thread.start()
+    @property
+    def needs_frame(self):
+        return not self.stop.is_set() and not self.frames.full()
     def submit(self,image):
         if self.stop.is_set():return
         try:self.frames.get_nowait()

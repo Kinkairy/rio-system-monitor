@@ -16,6 +16,24 @@ class Writer:
 
 
 class ReconnectTests(unittest.TestCase):
+    def test_hidden_render_demand_waits_for_queue_space_and_stops_with_writer(self):
+        entered=threading.Event();release=threading.Event();sender=Mock()
+        sender.send.side_effect=lambda pixels:(entered.set(),release.wait(2))
+        session=DisplaySession()
+        self.assertFalse(session.needs_frame)
+        with patch('rio_monitor.output.WinUSB'),patch('rio_monitor.output.FrameSender',return_value=sender):
+            output=ScreenOutput('device');session.output=output
+            try:
+                frame=Image.new('RGB',(480,480))
+                self.assertTrue(session.needs_frame)
+                output.submit(frame);self.assertTrue(entered.wait(1))
+                # One next frame can be prepared while the current frame transfers.
+                self.assertTrue(session.needs_frame)
+                output.submit(frame);self.assertFalse(session.needs_frame)
+                output.stop.set();self.assertFalse(session.needs_frame)
+            finally:release.set();self.assertTrue(session.close())
+        self.assertFalse(session.needs_frame)
+
     def test_missing_device_retries_with_backoff_then_connects_new_path(self):
         paths=[];created=[]
         def factory(path):

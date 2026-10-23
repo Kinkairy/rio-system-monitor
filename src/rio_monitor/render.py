@@ -33,12 +33,15 @@ class Renderer:
         self.clockfont=ImageFont.truetype(str(self.assets/'clock.otf'),33)
         self.ram_separator=Image.open(self.assets/'ram-separator.png').convert('RGBA')
         self.robot = RobotAnimator(self.assets)
-        self.gauge_mask=complete_gauge_mask(Image.open(self.assets/'gauge-mask.png').convert('L'))
+        mask=complete_gauge_mask(Image.open(self.assets/'gauge-mask.png').convert('L'))
+        self.gauge_box=mask.getbbox()
+        self.gauge_mask=mask.crop(self.gauge_box)
+        gx,gy,_,_=self.gauge_box
         self.temperature_fill=Image.new('RGB',(868,128),(0,230,130))
         self.temperature_fill_alpha=Image.new('L',self.temperature_fill.size)
         fill_draw=ImageDraw.Draw(self.temperature_fill_alpha)
         for y in range(128):fill_draw.line((0,y,867,y),fill=round(180*(127-y)/127))
-        self.gauge_colors=Image.new('RGB',self.background.size)
+        self.gauge_colors=Image.new('RGB',self.gauge_mask.size)
         gd=ImageDraw.Draw(self.gauge_colors)
         # Fixed green/yellow/orange/red temperature scale, same segmented mask.
         stops=[(0,(0,255,184)),(.32,(174,255,35)),(.55,(255,230,32)),(.78,(255,148,25)),(1,(255,45,50))]
@@ -47,7 +50,7 @@ class Renderer:
             for (a,ca),(b,cb) in zip(stops,stops[1:]):
                 if a<=fraction<=b:
                     t=(fraction-a)/(b-a);color=tuple(round(x+(y-x)*t) for x,y in zip(ca,cb));break
-            gd.pieslice((60,25,1195,1159),degree,degree+1,fill=color)
+            gd.pieslice((60-gx,25-gy,1195-gx,1159-gy),degree,degree+1,fill=color)
         self.gauge_dim=self.gauge_colors.point(lambda p:round(p*.23))
         self.robot_plate=Image.new('RGBA',(133,133))
         ImageDraw.Draw(self.robot_plate).ellipse((0,0,132,132),fill=(0,24,16,255))
@@ -124,12 +127,14 @@ class Renderer:
             else:
                 chart=self.charts[key];fresh=chart.update(samples.get(key),now,dt)
             chart.draw(im,left,palette,fresh)
-        gauge=self.gauge_dim.copy()
+        gx,gy,_,_=self.gauge_box
+        gauge=self.gauge_dim
         if temp is not None:
+            gauge=gauge.copy()
             progress=max(0,min(100,self.springs['temperature'].value))
-            active=Image.new('L',im.size);ImageDraw.Draw(active).pieslice((60,25,1195,1159),180,180+progress*1.8,fill=255)
+            active=Image.new('L',gauge.size);ImageDraw.Draw(active).pieslice((60-gx,25-gy,1195-gx,1159-gy),180,180+progress*1.8,fill=255)
             gauge.paste(self.gauge_colors,(0,0),active)
-        im.paste(gauge,(0,0),self.gauge_mask)
+        im.paste(gauge,(gx,gy),self.gauge_mask)
         sample=samples.get('temperature')
         if sample and sample.timestamp!=self.last_sample:
             self.history.append(temp);self.history=self.history[-120:];self.last_sample=sample.timestamp

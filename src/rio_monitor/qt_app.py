@@ -301,7 +301,7 @@ def main():
   renderer=Renderer();music_renderer=MusicRenderer(assets);music_view=AutomaticMusicView();transition=ViewTransition()
   while not stop.is_set():
    started=time.monotonic()
-   if bridge.visible or session.live:
+   if bridge.visible or session.needs_frame:
     music_state=music.snapshot()
     show_music=music_view.select(music_state,started);active_view[0]='music' if show_music else 'monitor'
     frame=music_renderer.render(music_state,language=bridge.s.language) if show_music else renderer.render(latest_samples[0],weather=weather.reading)
