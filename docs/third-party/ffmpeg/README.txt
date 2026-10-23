@@ -10,4 +10,5 @@ Full GPLv3 terms: COPYING.GPLv3.
 Build license/configuration: FFMPEG-LICENSE-NOTICE.txt.
 Upstream source version: https://github.com/FFmpeg/FFmpeg/tree/n6.1.1
 Windows build provider and build/source information: https://www.gyan.dev/ffmpeg/builds/
-No public binary or CI artifact containing private dashboard materials is published.
+The owner authorizes complete program EXEs on GitHub Releases as of 2026-10-23.
+Original dashboard asset files remain private; source-only CI publishes no builds.
