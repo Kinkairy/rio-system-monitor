@@ -6,8 +6,9 @@
   See `docs/temperature-component.md` for sources and explicit installation behavior.
 - Local video conversion uses a separately supplied FFmpeg 6.1.1 executable.
   Full GPLv3 terms and build notices are in `docs/third-party/ffmpeg/`.
-  The importer copies these notices into a private binary build; no FFmpeg binary
-  or private artwork is distributed by this public repository.
+  The importer copies these notices into the local binary build. The owner has
+  authorized full executable distribution through GitHub Releases; raw converter
+  and artwork files are not tracked in the public source tree.
 
 - Born2bSporty FS: Copyright Haley Wakamatsu (UkiyoMoji Fonts) 2022-2026.
   Author page explicitly grants SIL OFL 1.1:
@@ -24,9 +25,10 @@
   Qt/PySide LGPL obligations. This source-preparation snapshot is not a completed
   binary license/compliance audit or a signed release.
 
-RIO artwork, fonts, icons and animation materials are held in a private repository
-and are not distributed here. Font paths above refer to an authorized local asset
-import. A private binary build must retain the original notices with the material.
+RIO artwork, fonts, icons and animation source materials are held in a private
+repository. Authorized complete executables may be distributed as Release assets;
+the original asset files remain outside the public source Git tree. Font paths
+above refer to an authorized local import. Binary builds retain original notices.
 The public source's MIT license does not grant any rights to private artwork or
 relicense third-party materials.
 

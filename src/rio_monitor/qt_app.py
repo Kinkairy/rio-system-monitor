@@ -341,6 +341,11 @@ def main():
   if not session.close():return False
   worker.join(2);collector_worker.join(2);return not worker.is_alive() and not collector_worker.is_alive()
  bridge.shutdown=shutdown
+ if getattr(sys,'frozen',False) and not args.ui_capture and not args.self_test:
+  from .updater import AutoUpdater
+  updater=AutoUpdater(config_path().parent/'updates')
+  update_timer=QTimer(app);update_timer.setInterval(6*60*60*1000);update_timer.timeout.connect(updater.check);update_timer.start()
+  QTimer.singleShot(10000,updater.check);app.aboutToQuit.connect(updater.install_on_exit)
  if not args.ui_capture:QTimer.singleShot(500,session.start)
  if args.ui_capture:
   args.ui_capture.mkdir(parents=True,exist_ok=True)

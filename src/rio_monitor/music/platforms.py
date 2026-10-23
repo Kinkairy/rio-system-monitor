@@ -12,6 +12,7 @@ def identify_player(source):
     name=value.rsplit('/',1)[-1]
     if name in ('qqmusic','qqmusic.exe') or re.match(r'^tencent\.qqmusic_[a-z0-9]+!',name):return 'qq'
     if name in ('cloudmusic','cloudmusic.exe','neteasecloudmusic','neteasecloudmusic.exe') or re.match(r'^netease\.cloudmusic_[a-z0-9]+!',name):return 'netease'
+    if name in ('kugou','kugou.exe','kugoumusic','kugoumusic.exe'):return 'kugou'
     return None  # Browsers, LX and unknown app IDs must not be guessed.
 
 
@@ -58,20 +59,25 @@ def request_json(url,form=None,referer=None,json_body=None):
     return result
 
 
-def lookup_platform(track):
+def lookup_platform(track,player=None):
     from .lyrics import parse_lrc
-    player=identify_player(track.source)
-    if not player:return (), 'unsupported_source'
+    player=player or identify_player(track.source)
+    if player not in ('qq','netease','kugou'):return (), 'unsupported_source'
     if not track.title or not track.artist or track.duration<=0:return (), 'insufficient_metadata'
     query=track.title+' '+track.artist
     try:
         if player=='qq':
-            payload={'comm':{'ct':19,'cv':1859,'uin':'0'},'req':{'module':'music.search.SearchCgiService','method':'DoSearchForQQMusicDesktop','param':{'query':query,'num_per_page':10,'page_num':1,'search_type':0}}}
-            data=request_json('https://u.y.qq.com/cgi-bin/musicu.fcg',referer='https://y.qq.com/',json_body=payload)
-            result=data.get('req',{})
-            if data.get('code')!=0 or result.get('code')!=0:return (), 'provider_error'
+            suggestions=request_json('https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg?'+urllib.parse.urlencode(dict(key=track.title,format='json',is_xml=0)),referer='https://y.qq.com/')
+            if suggestions.get('code')!=0:return (), 'provider_error'
+            mids=list(dict.fromkeys(str(s.get('mid','')) for s in suggestions.get('data',{}).get('song',{}).get('itemlist',[])[:10] if re.fullmatch('[A-Za-z0-9]{1,64}',str(s.get('mid','')))))
+            if not mids:return (), 'not_found'
+            payload={mid:{'module':'music.pf_song_detail_svr','method':'get_song_detail_yqq','param':{'song_mid':mid}} for mid in mids}
+            details=request_json('https://u.y.qq.com/cgi-bin/musicu.fcg',referer='https://y.qq.com/',json_body=payload)
+            if details.get('code')!=0:return (), 'provider_error'
+            if any(details.get(mid,{}).get('code')!=0 for mid in mids):return (), 'provider_error'
+            songs=[details[mid].get('data',{}).get('track_info',{}) for mid in mids]
             candidates=[]
-            for item in result.get('data',{}).get('body',{}).get('song',{}).get('list',[])[:10]:
+            for item in songs[:10]:
                 ident=str(item.get('mid',''))
                 if not re.fullmatch('[A-Za-z0-9]{1,64}',ident):continue
                 # QQ publishes display aliases in SMTC, but also supplies the raw names.
@@ -86,7 +92,7 @@ def lookup_platform(track):
             # Some versions ignore nobase64. Accept only regular UTF-8 LRC.
             if '[' not in text:
                 text=base64.b64decode(text,validate=True).decode('utf-8')
-        else:
+        elif player=='netease':
             data=request_json('https://music.163.com/api/cloudsearch/pc',dict(s=query,type=1,limit=10,offset=0),referer='https://music.163.com/')
             if data.get('code')!=200:return (), 'provider_error'
             result=data.get('result')
@@ -101,6 +107,16 @@ def lookup_platform(track):
             data=request_json('https://music.163.com/api/song/lyric?'+urllib.parse.urlencode(dict(id=matched.ident,lv=-1,kv=-1,tv=-1)),referer='https://music.163.com/')
             if data.get('code')!=200:return (), 'provider_error'
             text=data.get('lrc',{}).get('lyric') or ''
+        else:
+            data=request_json('https://lyrics.kugou.com/search?'+urllib.parse.urlencode(dict(ver=1,man='yes',client='pc',keyword=query,duration=round(track.duration*1000))))
+            if data.get('status')!=200:return (), 'provider_error'
+            matches=[item for item in data.get('candidates',[])[:10] if normalized(item.get('song',''))==normalized(track.title) and normalized(item.get('singer',''))==normalized(track.artist) and abs(float(item.get('duration',0))/1000-track.duration)<=3]
+            if not matches:return (), 'not_found'
+            # Multiple contributions can describe the same timed song; prefer closest duration.
+            matched=min(matches,key=lambda item:abs(float(item.get('duration',0))/1000-track.duration))
+            data=request_json('https://lyrics.kugou.com/download?'+urllib.parse.urlencode(dict(ver=1,client='pc',id=matched['id'],accesskey=matched['accesskey'],fmt='lrc',charset='utf8')))
+            if data.get('status')!=200:return (), 'provider_error'
+            text=base64.b64decode(data.get('content') or '',validate=True).decode('utf-8-sig')
         rows=parse_lrc(text)
         return rows,'ready' if rows else 'no_timed_lyrics'
     except Exception:return (), 'provider_error'

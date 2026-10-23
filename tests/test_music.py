@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import patch,AsyncMock
 from PIL import Image
 from rio_monitor.music.state import Track,Audio,Spectrum,select_session,AutomaticMusicView
-from rio_monitor.music.lyrics import Lyric,parse_lrc,current_lines,lookup
+from rio_monitor.music.lyrics import Lyric,parse_lrc,current_lines,lookup_lrclib
 from rio_monitor.music.controller import Music
 from rio_monitor.music.renderer import MusicRenderer,marquee_offset
 from rio_monitor.music.windows import CoverCache
@@ -170,7 +170,7 @@ class MusicTests(unittest.TestCase):
    def __exit__(self,*args):pass
    def read(self,n):return b'{"duration":100,"trackName":"different","artistName":"Artist","syncedLyrics":"[00:01]line"}'
   with patch('urllib.request.urlopen',return_value=Response()) as request:
-   rows,status=lookup(Track(title='Song',artist='Artist',duration=100))
+   rows,status=lookup_lrclib(Track(title='Song',artist='Artist',duration=100))
    self.assertEqual(status,'not_found');self.assertFalse(rows)
    self.assertTrue(request.call_args.args[0].full_url.startswith('https://lrclib.net/api/get?'))
  def test_render_empty_pause_and_transition_without_private_assets(self):

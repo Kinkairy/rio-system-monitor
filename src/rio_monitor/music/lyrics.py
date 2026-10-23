@@ -1,7 +1,11 @@
 """LRC parsing, source-specific matching and optional LRCLIB fallback. No account tokens."""
 from dataclasses import dataclass
 from bisect import bisect_right
+from concurrent.futures import ThreadPoolExecutor,as_completed
 import re,json,urllib.parse,urllib.request,urllib.error
+
+# Threads start only when needed and are reused across songs; never grow per lookup.
+_fallback_pool=ThreadPoolExecutor(max_workers=4,thread_name_prefix='RIO-lyrics')
 
 @dataclass(frozen=True)
 class Lyric:
@@ -51,9 +55,23 @@ def lookup_lrclib(track):
 
 
 def lookup(track):
-    from .platforms import lookup_platform
-    rows,status=lookup_platform(track)
-    if rows:return rows,status
-    rows,fallback_status=lookup_lrclib(track)
-    if not rows and status=='provider_error' and fallback_status!='instrumental':return (),status
-    return rows,fallback_status
+    from .platforms import identify_player,lookup_platform
+    if not track.title or not track.artist or track.duration<=0:return (), 'insufficient_metadata'
+    player=identify_player(track.source);statuses=[]
+    if player:
+        rows,status=lookup_platform(track,player)
+        if rows:return rows,status
+        statuses.append(status)
+    futures=[_fallback_pool.submit(lookup_lrclib,track)]
+    futures.extend(_fallback_pool.submit(lookup_platform,track,name) for name in ('qq','netease','kugou') if name!=player)
+    try:
+        for future in as_completed(futures):
+            try:rows,status=future.result()
+            except Exception:rows,status=(),'provider_error'
+            if rows:return rows,status
+            statuses.append(status)
+    finally:
+        for future in futures:future.cancel()
+    for status in ('instrumental','provider_error','network_error','no_timed_lyrics'):
+        if status in statuses:return (),status
+    return (), 'not_found'
