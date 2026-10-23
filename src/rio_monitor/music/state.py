@@ -30,7 +30,19 @@ class Audio:
 
 class Spectrum:
     """12 log-spaced FFT bands, DC removed, bounded dB range; no fake beats."""
-    def __init__(self,rate):self.rate=rate
+    def __init__(self,rate):
+        self.rate=rate;self._plan_key=None;self._window=None;self._normalizer=None;self._bands=None
+    def _plan(self,length):
+        import numpy as np
+        key=(length,self.rate)
+        if key!=self._plan_key:
+            self._window=np.hanning(length)
+            self._normalizer=max(1,self._window.sum())**2
+            frequencies=np.fft.rfftfreq(length,1/self.rate)
+            edges=np.geomspace(35,min(16000,self.rate*.48),13)
+            self._bands=tuple((frequencies>=lo)&(frequencies<hi) for lo,hi in zip(edges,edges[1:]))
+            self._plan_key=key
+        return self._window,self._normalizer,self._bands
     def analyze(self,pcm,channels,now):
         import numpy as np
         x=np.asarray(pcm,dtype=np.float32).reshape(-1,channels)
@@ -38,13 +50,11 @@ class Spectrum:
         x=np.nan_to_num(x,nan=0,posinf=0,neginf=0);x=x-x.mean(axis=0)
         rms=float(np.sqrt(np.mean(x*x))) if len(x) else 0
         if len(x)<64 or rms<1e-5:return Audio(observed=now,status='ready')
-        window=np.hanning(len(x));fft=np.fft.rfft(x*window[:,None],axis=0)
-        power=np.mean(abs(fft)**2,axis=1)/(max(1,window.sum())**2)
-        frequencies=np.fft.rfftfreq(len(x),1/self.rate)
-        edges=np.geomspace(35,min(16000,self.rate*.48),13)
+        window,normalizer,masks=self._plan(len(x));fft=np.fft.rfft(x*window[:,None],axis=0)
+        power=np.mean(abs(fft)**2,axis=1)/normalizer
         bands=[]
-        for lo,hi in zip(edges,edges[1:]):
-            values=power[(frequencies>=lo)&(frequencies<hi)]
+        for mask in masks:
+            values=power[mask]
             db=10*math.log10(max(1e-12,float(values.sum())))
             bands.append(max(0,min(1,(db+65)/55)))
         level=max(0,min(1,(20*math.log10(max(1e-9,rms))+55)/50))
@@ -71,3 +81,4 @@ class AutomaticMusicView:
             if self.idle_since is None:self.idle_since=now
             if now-self.idle_since>=30:self.active=False
         return self.active
+

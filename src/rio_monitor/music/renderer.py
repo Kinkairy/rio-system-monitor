@@ -134,8 +134,8 @@ class MusicRenderer:
   else:self.current=incoming
   elapsed=now-self.changed if self.changed is not None else 100
   exiting=elapsed<.34;track=self.previous if exiting else self.current
-  lines=self.previous_lines if exiting else self.lyric_lines(snapshot,now,zh)
   self.last_lines=self.lyric_lines(snapshot,now,zh)
+  lines=self.previous_lines if exiting else self.last_lines
   if incoming.playing:self.angle=(self.angle+dt*45)%360
   if exiting:
    p=max(0,min(1,elapsed/.26));record_dx=-300*p*p
@@ -233,3 +233,4 @@ class MusicRenderer:
    # No traveling white cap; columns rise and settle like the CPU chart.
   tx(240,451,('AUDIO / LIVE' if audio.status=='ready' else 'AUDIO / N/A'),9,'#88afa0')
   return im.resize((480,480),Image.Resampling.LANCZOS)
+

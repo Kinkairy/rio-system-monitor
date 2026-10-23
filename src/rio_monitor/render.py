@@ -48,6 +48,14 @@ class Renderer:
                 if a<=fraction<=b:
                     t=(fraction-a)/(b-a);color=tuple(round(x+(y-x)*t) for x,y in zip(ca,cb));break
             gd.pieslice((60,25,1195,1159),degree,degree+1,fill=color)
+        self.gauge_dim=self.gauge_colors.point(lambda p:round(p*.23))
+        self.robot_plate=Image.new('RGBA',(133,133))
+        ImageDraw.Draw(self.robot_plate).ellipse((0,0,132,132),fill=(0,24,16,255))
+        grid=Image.new('RGBA',(132,132));gg=ImageDraw.Draw(grid)
+        for pos in range(0,132,22):
+            gg.line((pos,0,pos,132),fill=(7,51,35,255));gg.line((0,pos,132,pos),fill=(7,51,35,255))
+        clip=Image.new('L',(132,132));ImageDraw.Draw(clip).ellipse((0,0,131,131),fill=255)
+        self.robot_plate.paste(grid,(0,0),clip)
         self.digits=RollingText(self.assets,font_choice);self.springs={k:Spring() for k in ('cpu','gpu','ram','temperature')}
         self.clock_variable=self.digits.font(next(n for n in range(80,10,-1) if self.digits.font(n).getbbox('0')[3]-self.digits.font(n).getbbox('0')[1]<=self.clockfont.getbbox('0')[3]-self.clockfont.getbbox('0')[1]))
         self.charts={k:UsageChart() for k in ("cpu","gpu")}
@@ -105,7 +113,9 @@ class Renderer:
                 if edge>=left:d.rectangle((left,y,edge,y+bh),fill=color)
         for reading in getattr(samples,'gpus',()):
             from .model import Sample
-            chart=self.gpu_charts.setdefault(reading.identifier,UsageChart())
+            if reading.identifier not in self.gpu_charts:
+                self.gpu_charts[reading.identifier]=UsageChart()
+            chart=self.gpu_charts[reading.identifier]
             chart.update(Sample(reading.usage,reading.timestamp,reading.identifier),now,dt)
         for key,left,palette in [("cpu",33,CPU),("gpu",247,GPU)]:
             selected=getattr(samples,'selected_gpu',None)
@@ -114,7 +124,7 @@ class Renderer:
             else:
                 chart=self.charts[key];fresh=chart.update(samples.get(key),now,dt)
             chart.draw(im,left,palette,fresh)
-        gauge=self.gauge_colors.point(lambda p:round(p*.23))
+        gauge=self.gauge_dim.copy()
         if temp is not None:
             progress=max(0,min(100,self.springs['temperature'].value))
             active=Image.new('L',im.size);ImageDraw.Draw(active).pieslice((60,25,1195,1159),180,180+progress*1.8,fill=255)
@@ -147,17 +157,11 @@ class Renderer:
         if pts:
             x,y=pts[-1];d.ellipse((x-6,y-6,x+6,y+6),fill='#ffe533')
         # Original-art in-betweens from a219b700; fixed base and anchor.
-        plate=Image.new('RGBA',im.size);pd=ImageDraw.Draw(plate)
-        pd.ellipse((904,385,1036,517),fill=(0,24,16,255))
-        grid=Image.new('RGBA',(132,132));gg=ImageDraw.Draw(grid)
-        for pos in range(0,132,22):
-            gg.line((pos,0,pos,132),fill=(7,51,35,255));gg.line((0,pos,132,pos),fill=(7,51,35,255))
-        clip=Image.new('L',(132,132));ImageDraw.Draw(clip).ellipse((0,0,131,131),fill=255)
-        plate.paste(grid,(904,385),clip)
-        im.paste(plate,(0,0),plate)
+        im.paste(self.robot_plate,(904,385),self.robot_plate)
         self.robot.draw(im,now)
         self.weather.draw(im,weather,now)
         self.clock(im,wall)
         phase=self.sheen.phase(now)
         if temp is not None:self.sheen.apply(im,phase)
         return im.resize((size,size),Image.Resampling.LANCZOS)
+
