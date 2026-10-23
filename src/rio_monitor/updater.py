@@ -26,18 +26,22 @@ def latest_asset(current=__version__):
     return None
 
 
-def download_asset(asset,directory,stop=None):
+def download_asset(asset,directory,stop=None,progress=None):
     directory=Path(directory);directory.mkdir(parents=True,exist_ok=True)
     expected=asset['digest'].split(':',1)[1].lower()
     destination=directory/(asset['version']+'.exe');partial=destination.with_suffix('.part')
-    if destination.is_file() and file_hash(destination)==expected:return destination
+    if destination.is_file() and file_hash(destination)==expected:
+        if progress:progress(asset['size'],asset['size'])
+        return destination
     request=urllib.request.Request(asset['browser_download_url'],headers={'User-Agent':'RIO-System-Monitor/'+__version__})
     digest=hashlib.sha256();size=0
     try:
+        if progress:progress(0,asset['size'])
         with urllib.request.urlopen(request,timeout=15) as response,partial.open('wb') as output:
             while block:=response.read(1024*1024):
                 if stop and stop.is_set():raise InterruptedError('Program is exiting')
                 size+=len(block);digest.update(block);output.write(block)
+                if progress:progress(size,asset['size'])
         if size!=asset['size'] or digest.hexdigest()!=expected:raise ValueError('Incomplete or damaged update')
         partial.replace(destination)
         return destination
@@ -95,16 +99,29 @@ def launch_install(staged,target,directory,version,wait_pids):
 class AutoUpdater:
     def __init__(self,directory):
         self.directory=Path(directory);self.stop=threading.Event();self.worker=None;self.pending=None
+        self.lock=threading.Lock();self.state=dict(state='idle',connection='unknown',progress=0)
+    def snapshot(self):
+        with self.lock:return dict(self.state)
+    def update(self,**values):
+        with self.lock:self.state.update(values)
     def check(self):
-        if self.stop.is_set() or self.pending or (self.worker and self.worker.is_alive()):return
-        self.worker=threading.Thread(target=self.run,daemon=True,name='RIO-update');self.worker.start()
+        with self.lock:
+            if self.stop.is_set() or self.pending or (self.worker and self.worker.is_alive()):return
+            self.state.update(state='checking',progress=0)
+            self.worker=threading.Thread(target=self.run,daemon=True,name='RIO-update');self.worker.start()
     def run(self):
         try:
             asset=latest_asset()
-            if not asset:return
-            staged=download_asset(asset,self.directory,self.stop)
-            if not self.stop.is_set():self.pending=(staged,asset['version'])
+            self.update(connection='connected')
+            if not asset:self.update(state='latest');return
+            self.update(state='downloading')
+            staged=download_asset(asset,self.directory,self.stop,
+                                  lambda done,total:self.update(progress=min(99,done*100//max(1,total))))
+            if not self.stop.is_set():
+                self.pending=(staged,asset['version']);self.update(state='ready',progress=100)
         except Exception as exc:
+            snapshot=self.snapshot()
+            self.update(state='error',connection='failed' if snapshot['state']=='checking' else snapshot['connection'])
             try:
                 self.directory.mkdir(parents=True,exist_ok=True)
                 (self.directory/'status.json').write_text(json.dumps(dict(status='check_failed',error=type(exc).__name__)),encoding='utf-8')

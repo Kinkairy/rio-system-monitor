@@ -163,22 +163,53 @@ ApplicationWindow {
   RioText { x: 24; y: 535; text: win.tr("Start at login","登录后启动"); color: "#dce3e6" }
   RioSwitch { id: autoSwitch; objectName: "autoSwitch"; x: 358; y: 529; checked: bridge.autostart; onToggled: bridge.setAutostart(checked) }
   Rectangle { x: 20; y: 575; width: 380; height: 1; color: "#292f32" }
-  EnglishText { x: 24; y: 606; text: "Your system. At a glance."; color: "#899398"; font.pixelSize: 10 }
-  Row {
-   id: temperatureLoading; objectName: "temperatureLoading"; x: (parent.width-width)/2; y: 608; spacing: 7; visible: bridge.monitorBusy || bridge.storageBusy
-   Repeater {
-    model: 3
-    delegate: Rectangle {
-     id: loadingDot; required property int index; objectName: "temperatureLoadingDot"+index
-     width: 6; height: 6; radius: 3; color: "#a7eb52"; opacity: 0.25
-     SequentialAnimation on opacity {
-      running: temperatureLoading.visible && win.visible; loops: Animation.Infinite
-      PauseAnimation { duration: loadingDot.index*150 }
-      NumberAnimation { from: 0.25; to: 1; duration: 200; easing.type: Easing.InOutQuad }
-      NumberAnimation { from: 1; to: 0.25; duration: 200; easing.type: Easing.InOutQuad }
-      PauseAnimation { duration: 650-loadingDot.index*150 }
-     }
+  Rectangle {
+   objectName: "updateConnectionLamp"; x: 24; y: 607; width: 8; height: 8; radius: 4; antialiasing: true
+   color: bridge.updateConnection==="connected" ? "#a7eb52" : bridge.updateConnection==="failed" ? "#eb7070" : "#68767d"
+   HoverHandler { id: connectionHover }
+   ToolTip.visible: connectionHover.hovered
+   ToolTip.text: bridge.updateConnection==="connected" ? win.tr("GitHub connected","GitHub 已连接") : bridge.updateConnection==="failed" ? win.tr("GitHub connection failed","GitHub 连接失败") : win.tr("GitHub not checked","尚未检测 GitHub")
+  }
+  EnglishText { id: currentVersion; objectName: "currentVersion"; x: 44; y: 605; text: bridge.version; color: "#829096"; font.pixelSize: 10 }
+  ActionButton {
+   id: updateLink; objectName: "checkUpdatesButton"
+   x: currentVersion.x+currentVersion.implicitWidth+6; y: 594; width: 72; height: 34; text: "Check updates"
+   leftPadding: 0; rightPadding: 0; showOutline: false; fill: "transparent"
+   enabled: bridge.updateState!=="checking" && bridge.updateState!=="downloading" && bridge.updateState!=="ready"
+   opacity: 1; ink: enabled ? "#a7eb52" : "#829074"
+   font.family: currentVersion.font.family; font.pixelSize: currentVersion.font.pixelSize; font.underline: true
+   contentItem: EnglishText { text: updateLink.text; color: updateLink.ink; font: updateLink.font; verticalAlignment: Text.AlignVCenter }
+   onClicked: bridge.checkUpdates()
+  }
+  Item {
+   id: footerProgressArea; objectName: "footerProgressArea"; x: 177; y: 594; width: 117; height: 34
+   visible: bridge.footerStatus!==""
+   property bool indeterminate: bridge.footerProgress<0
+   property real motion: 0
+   RioText {
+    objectName: "footerStatusLabel"; x: 0; y: 0; width: footerPercent.visible ? 83 : 117; text: bridge.footerStatus
+    color: "#a2b0b5"; font.pixelSize: 10; elide: Text.ElideRight
+    HoverHandler { id: footerHover }
+    ToolTip.visible: footerHover.hovered; ToolTip.text: bridge.footerStatus
+   }
+   EnglishText {
+    id: footerPercent; objectName: "footerPercent"; x: 86; y: 0; width: 31
+    text: Math.round(bridge.footerProgress*100)+"%"; visible: bridge.footerBusy && !footerProgressArea.indeterminate
+    horizontalAlignment: Text.AlignRight; font.pixelSize: 10; color: "#a7eb52"
+   }
+   Rectangle {
+    id: footerTrack; objectName: "footerProgressTrack"; x: 0; y: 25; width: 117; height: 4; radius: 2; color: "#303a3b"; clip: true
+    visible: bridge.footerBusy
+    Rectangle {
+     id: footerFill; objectName: "footerProgressFill"
+     width: footerTrack.width*(footerProgressArea.indeterminate ? 0.32 : Math.max(0,Math.min(1,bridge.footerProgress)))
+     x: footerProgressArea.indeterminate ? (footerTrack.width-width)*footerProgressArea.motion : 0
+     height: 4; radius: 2; color: "#a7eb52"
     }
+   }
+   NumberAnimation on motion {
+    objectName: "footerProgressAnimation"; from: 0; to: 1; duration: 1000; loops: Animation.Infinite
+    running: footerTrack.visible && footerProgressArea.indeterminate && win.visible
    }
   }
   ActionButton { objectName: "saveButton"; x: 310; y: 594; width: 90; height: 34; text: win.tr("Save","保存"); fill: "#a7eb52"; ink: "#17210f"; onClicked: bridge.saveAndHide() }

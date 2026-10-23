@@ -1,6 +1,7 @@
-import hashlib,io,json,os,subprocess,tempfile,unittest
+import hashlib,io,json,os,subprocess,tempfile,threading,unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import URLError
 from rio_monitor.updater import ASSET_NAME,AutoUpdater,download_asset,latest_asset,launch_install
 
 
@@ -32,6 +33,38 @@ class UpdateTests(unittest.TestCase):
    updater=AutoUpdater(root/'updates');updater.pending=(staged,'rc0.1.2')
    with patch('rio_monitor.updater.launch_install') as install:
     updater.install_on_exit();self.assertTrue(updater.stop.is_set());install.assert_called_once()
+ def test_progress_tracks_received_bytes_and_a_verified_cached_download(self):
+  content=b'x'*(2*1024*1024+17);asset=self.asset(content);progress=[]
+  with tempfile.TemporaryDirectory() as tmp:
+   with patch('urllib.request.urlopen',return_value=io.BytesIO(content)):
+    download_asset(asset,tmp,progress=lambda done,total:progress.append((done,total)))
+   self.assertEqual(progress,[(n,len(content)) for n in (0,1024*1024,2*1024*1024,len(content))])
+   progress.clear()
+   with patch('urllib.request.urlopen') as request:
+    download_asset(asset,tmp,progress=lambda done,total:progress.append((done,total)));request.assert_not_called()
+   self.assertEqual(progress,[(len(content),len(content))])
+ def test_manual_check_reports_progress_without_starting_duplicate_downloads(self):
+  entered=threading.Event();finish=threading.Event()
+  def download(asset,directory,stop,progress):
+   progress(42,100);entered.set();finish.wait(3);return Path(directory)/'new.exe'
+  with tempfile.TemporaryDirectory() as tmp:
+   updater=AutoUpdater(tmp)
+   with patch('rio_monitor.updater.latest_asset',return_value=self.asset()) as latest,patch('rio_monitor.updater.download_asset',side_effect=download) as fetch:
+    try:
+     updater.check();self.assertTrue(entered.wait(2))
+     self.assertEqual(updater.snapshot(),dict(state='downloading',connection='connected',progress=42))
+     updater.check();latest.assert_called_once();fetch.assert_called_once()
+    finally:finish.set();updater.worker.join(3)
+    self.assertEqual(updater.snapshot(),dict(state='ready',connection='connected',progress=100))
+    updater.check();fetch.assert_called_once()
+ def test_latest_connection_failure_and_download_failure_remain_distinct(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   for result,error,state,connection in ((None,None,'latest','connected'),(None,URLError('Offline'),'error','failed'),(self.asset(),None,'error','connected')):
+    updater=AutoUpdater(tmp)
+    with self.subTest(state=state,connection=connection),patch('rio_monitor.updater.latest_asset',return_value=result,side_effect=error),patch('rio_monitor.updater.download_asset',side_effect=ValueError('Incomplete')):
+     updater.check();updater.worker.join(3)
+     self.assertFalse(updater.worker.is_alive());self.assertEqual(updater.snapshot()['state'],state)
+     self.assertEqual(updater.snapshot()['connection'],connection);self.assertIsNone(updater.pending)
  @unittest.skipUnless(os.name=='nt','Windows update handoff')
  def test_windows_handoff_waits_for_exit_then_replaces_only_the_program(self):
   with tempfile.TemporaryDirectory() as tmp:

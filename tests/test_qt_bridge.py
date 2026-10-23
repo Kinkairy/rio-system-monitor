@@ -21,6 +21,23 @@ class BridgeTests(unittest.TestCase):
  def test_settings_save(self):
   self.b.setLanguage('zh');self.b.setRotation(90);self.b.setAutostart(True)
   self.assertEqual(self.b.s.rotation,90);self.assertTrue(self.b.s.autostart);self.assertEqual(self.b.s.language,'zh')
+ def test_shared_footer_returns_to_download_after_driver_or_media_work(self):
+  from rio_monitor.updater import AutoUpdater
+  self.b.setLanguage('zh')
+  updater=AutoUpdater('unused-updates');self.b.updater=updater
+  with patch.object(updater,'check',side_effect=lambda:updater.update(state='checking')) as check:
+   self.b.checkUpdates();check.assert_called_once();self.assertEqual(self.b.updateState,'checking')
+  updater.update(state='downloading',connection='connected',progress=42);self.b.consume()
+  self.assertAlmostEqual(self.b.footerProgress,.42);self.assertTrue(self.b.footerBusy)
+  self.b.monitor.busy=True;self.b.monitor.operation='installing';self.b.changed.emit()
+  self.assertEqual(self.b.footerProgress,-1);self.assertIn('安装',self.b.footerStatus)
+  self.b.monitor.operation='uninstalling';self.assertIn('卸载',self.b.footerStatus)
+  self.b.monitor.busy=False;self.b.storage.update(busy=True,phase='write',progress=.37)
+  self.assertAlmostEqual(self.b.footerProgress,.37);self.assertIn('写入',self.b.footerStatus)
+  self.b.storage.update(busy=False);self.assertAlmostEqual(self.b.footerProgress,.42)
+  self.b.setLanguage('en');self.assertEqual(self.b.footerStatus,'Downloading…')
+  updater.update(state='ready',progress=100);self.b.consume()
+  self.assertFalse(self.b.footerBusy);self.assertEqual(self.b.footerStatus,'Exit to apply update')
  def test_rotation_applies_before_debounced_save_without_weather_restart(self):
   self.b.capture=False
   with patch('rio_monitor.qt_app.save') as save:

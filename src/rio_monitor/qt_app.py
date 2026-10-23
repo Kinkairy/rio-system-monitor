@@ -38,12 +38,13 @@ class Frames(QQuickImageProvider):
 
 class Bridge(QObject):
  changed=Signal();frameChanged=Signal();noticeChanged=Signal();defaultConfirmationChanged=Signal()
- def __init__(self,app,settings,weather,provider,capture=False,monitor=None,storage=None,music=None):
+ def __init__(self,app,settings,weather,provider,capture=False,monitor=None,storage=None,music=None,updater=None):
   super().__init__();self.app=app;self.s=settings;self.weather=weather;self.frames=provider;self.capture=capture;self.win=None;self.tray=None;self._frame=0;self._notice='';self._saved=False;self._results=[];self._status='';self._busy=False;self._city='';self.loc=None;self.mode=settings.weather_mode;self.city=settings.city;self.mail=queue.Queue();self.generation=0;self.visible=True;self.quitting=False;self.shutdown=None
   self._dirty=False;self.save_timer=QTimer(self);self.save_timer.setSingleShot(True);self.save_timer.setInterval(250);self.save_timer.timeout.connect(self.flushSettings)
   self.monitor=monitor or TemperatureComponent(Path(),settings.temperature_monitor,start=False);self.monitor_snapshot=None
   self.storage=storage or StorageJob(DisplaySession(settings.display_mode),Path());self.storage_snapshot=None
   self.music=music or Music(Path(),start=False);self.music_signature=None
+  self.updater=updater;self.update_snapshot=updater.snapshot() if updater else dict(state='idle',connection='unknown',progress=0)
   self._reset_requested=False
   if settings.weather_mode=='manual':
    try:self._city=json.loads(settings.city)['label'].split(',')[0]
@@ -59,6 +60,29 @@ class Bridge(QObject):
  saved=Property(bool,lambda self:self._saved,notify=changed)
  notice=Property(str,lambda self:self._notice,notify=noticeChanged)
  frameId=Property(int,lambda self:self._frame,notify=frameChanged)
+ version=Property(str,lambda self:__version__,constant=True)
+ updateState=Property(str,lambda self:self.update_snapshot['state'],notify=changed)
+ updateConnection=Property(str,lambda self:self.update_snapshot['connection'],notify=changed)
+ @Slot()
+ def checkUpdates(self):
+  if self.updater:self.updater.check();self.consume()
+ def getFooterStatus(self):
+  monitor=self.monitor.snapshot();storage=self.storage.snapshot();zh=self.s.language=='zh'
+  if monitor['busy']:
+   return ('正在卸载驱动…' if zh else 'Removing driver…') if monitor['state']=='uninstalling' else ('正在安装驱动…' if zh else 'Installing driver…')
+  if storage['busy']:
+   labels={'prepare':('Preparing media…','正在转换媒体…'),'connecting':('Connecting…','正在连接屏幕…'),'erase':('Preparing storage…','正在准备存储…'),'write':('Writing media…','正在写入媒体…')}
+   return labels.get(storage['phase'],labels['prepare'])[1 if zh else 0]
+  labels={'checking':('Checking…','正在检测更新…'),'downloading':('Downloading…','正在下载更新'),'latest':('Up to date','已是最新版本'),'ready':('Exit to apply update','退出后完成更新'),'error':('Update failed','更新失败 · 请重试')}
+  return labels.get(self.updateState,('',''))[1 if zh else 0]
+ footerStatus=Property(str,getFooterStatus,notify=changed)
+ footerBusy=Property(bool,lambda self:self.monitorBusy or self.storageBusy or self.updateState in ('checking','downloading'),notify=changed)
+ def getFooterProgress(self):
+  if self.monitorBusy:return -1.
+  storage=self.storage.snapshot()
+  if storage['busy']:return storage['progress'] if storage['phase'] in ('erase','write') else -1.
+  return self.update_snapshot['progress']/100 if self.updateState=='downloading' else -1.
+ footerProgress=Property(float,getFooterProgress,notify=changed)
  monitorChecked=Property(bool,lambda self:self.monitor.snapshot()['checked'],notify=changed)
  monitorBusy=Property(bool,lambda self:self.monitor.snapshot()['busy'],notify=changed)
  monitorExternal=Property(bool,lambda self:self.monitor.snapshot().get('external',False),notify=changed)
@@ -241,6 +265,9 @@ class Bridge(QObject):
    except Exception as ex:self.mail.put(('locate',gen,None,str(ex)))
   threading.Thread(target=run,daemon=True).start()
  def consume(self):
+  if self.updater:
+   update_snapshot=self.updater.snapshot()
+   if update_snapshot!=self.update_snapshot:self.update_snapshot=update_snapshot;self.changed.emit()
   state=self.music.snapshot();signature=(state['status'],state['audio'].status,state['lyric_status'],repr(state['sources']))
   if signature!=self.music_signature:self.music_signature=signature;self.changed.emit()
   storage_snapshot=self.storage.snapshot()
@@ -279,7 +306,9 @@ def main():
  QQuickStyle.setStyle('Basic')
  app=QApplication(sys.argv);app.setQuitOnLastWindowClosed(False);app.setApplicationName('RIO System Monitor');app.setApplicationVersion(__version__);app.setFont(QFont('Segoe UI',10))
  assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets';app.setWindowIcon(QIcon(str(assets/'rio-icon.ico')))
- settings=Settings(weather_mode='off') if args.ui_capture else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not args.ui_capture);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets,cache_dir=None if args.ui_capture else config_path().parent/'screen-content');music=Music(config_path().parent/'lyrics',settings.music_enabled,settings.music_online_lyrics,settings.music_source,start=not args.ui_capture);bridge=Bridge(app,settings,weather,provider,bool(args.ui_capture),monitor=monitor,storage=storage,music=music);engine=QQmlApplicationEngine();engine.addImageProvider('monitor',provider);engine.rootContext().setContextProperty('bridge',bridge);engine.load(QUrl.fromLocalFile(str(assets/'ui/Main.qml')))
+ from .updater import AutoUpdater
+ updater=AutoUpdater(config_path().parent/'updates') if getattr(sys,'frozen',False) and not args.ui_capture and not args.self_test else None
+ settings=Settings(weather_mode='off') if args.ui_capture else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not args.ui_capture);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets,cache_dir=None if args.ui_capture else config_path().parent/'screen-content');music=Music(config_path().parent/'lyrics',settings.music_enabled,settings.music_online_lyrics,settings.music_source,start=not args.ui_capture);bridge=Bridge(app,settings,weather,provider,bool(args.ui_capture),monitor=monitor,storage=storage,music=music,updater=updater);engine=QQmlApplicationEngine();engine.addImageProvider('monitor',provider);engine.rootContext().setContextProperty('bridge',bridge);engine.load(QUrl.fromLocalFile(str(assets/'ui/Main.qml')))
  if not engine.rootObjects():raise RuntimeError('Qt Quick main window failed to load')
  bridge.win=engine.rootObjects()[0];bridge.tray=QSystemTrayIcon(app.windowIcon(),app);bridge.tray.setToolTip('RIO System Monitor '+__version__);bridge.updateMenu();bridge.tray.activated.connect(bridge.trayActivated)
  if not args.ui_capture:bridge.tray.show()
@@ -341,9 +370,7 @@ def main():
   if not session.close():return False
   worker.join(2);collector_worker.join(2);return not worker.is_alive() and not collector_worker.is_alive()
  bridge.shutdown=shutdown
- if getattr(sys,'frozen',False) and not args.ui_capture and not args.self_test:
-  from .updater import AutoUpdater
-  updater=AutoUpdater(config_path().parent/'updates')
+ if updater:
   update_timer=QTimer(app);update_timer.setInterval(6*60*60*1000);update_timer.timeout.connect(updater.check);update_timer.start()
   QTimer.singleShot(10000,updater.check);app.aboutToQuit.connect(updater.install_on_exit)
  if not args.ui_capture:QTimer.singleShot(500,session.start)
