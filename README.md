@@ -4,7 +4,7 @@
 
 ## 当前版本与目录
 
-当前版本为 **rc0.1.10**，可从 [GitHub Release](https://github.com/Kinkairy/rio-system-monitor/releases/tag/rc0.1.10) 下载完整程序。保留 `rc0.1` 标签作为原有基准。本版继承减少托盘无用绘制、缩小温度环缓存和释放已拆分图集的 CPU/内存优化；结果与验证边界见[性能说明](docs/performance.md)。源码入口支持 `python launch.py --version`，托盘提示仅显示 RIO System Monitor。
+当前版本为 **rc0.1.11**，可从 [GitHub Release](https://github.com/Kinkairy/rio-system-monitor/releases/tag/rc0.1.11) 下载完整程序。保留 `rc0.1` 标签作为原有基准。本版继承减少托盘无用绘制、缩小温度环缓存和释放已拆分图集的 CPU/内存优化；结果与验证边界见[性能说明](docs/performance.md)。源码入口支持 `python launch.py --version`，托盘提示仅显示 RIO System Monitor。
 
 当前版本包含歌词修正：移除不稳定的 QQ 桌面搜索，兼容歌手显示别名；先查播放器自身接口，获取不到再并发查询其他 QQ/网易云/酷狗/LRCLIB 接口，先取得有效同步歌词的先显示。歌名区域缩为居中的 240px，超出后往返滚动，避免遮住侧边仪表。`rc0.1` 标签保留为原有基准。修正与验证记录见[音乐模式说明](docs/music-mode.md#fix-20261023-qq-lyrics-failed-online-lyric-lookup)。
 
@@ -128,11 +128,11 @@ AUTOUPDATE-20261023-LIVE 追加（实现前）：用户报告开启登录启动�
 Windows 本地构建使用 Python 3.12，需要访问私有素材并自行提供本地转换器：
 
 ```text
-python tools/import_private_assets.py --source "<rio-system>/RoundScreen/monitor-assets" --startup-loop "<rio-system>/RoundScreen/artwork/startup-loop/RIO-System-Monitor-color-accent-loop.gif" --music-font "<rio-system>/RoundScreen/artwork/music-mode/fonts/RIOPixel-Regular.ttf" --music-art "<rio-system>/RoundScreen/artwork/music-mode" --ffmpeg "<local-FFmpeg-6.1.1>/ffmpeg.exe"
+python tools/import_private_assets.py --source "<rio-system>/RoundScreen/monitor-assets" --startup-loop "<rio-system>/RoundScreen/artwork/startup-loop/RIO-System-Monitor-color-accent-loop.gif" --music-font "<rio-system>/RoundScreen/artwork/music-mode/fonts/RIOPixel-Regular.ttf" --music-art "<rio-system>/RoundScreen/artwork/music-mode" --ffmpeg "<local-RIO-FFmpeg>/ffmpeg.exe"
 Build-Windows.cmd
 ```
 
-导入器校验固定 SHA-256，将素材和 FFmpeg 放进本地忽略的 assets 目录；默认 GIF 必须为 `fa2f691` 版本。当前转换器是 Windows x64 FFmpeg 6.1.1 essentials，SHA-256 `04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00`。构建时从官方发行页下载并验证 LHM/PawnIO，编译温度辅助服务，再打包单 EXE；构建不会安装驱动。
+导入器校验固定 SHA-256，将素材和 FFmpeg 放进本地忽略的 assets 目录；默认 GIF 必须为 `fa2f691` 版本。转换器允许既有 Windows x64 FFmpeg 6.1.1 essentials 与本次 RIO 精简构建，固定 SHA-256、来源和按需构建步骤见 docs/third-party/ffmpeg/README.txt；精简版继续内置，不要求用户安装。构建时从官方发行页下载并验证 LHM/PawnIO，编译温度辅助服务，再打包单 EXE；构建不会安装驱动。
 
 ```text
 python tools/check_source_only.py
@@ -142,6 +142,32 @@ python -m unittest discover -s tests -v
 ```
 
 未导入素材时，依赖图像、字体、默认动画或本地转换器的测试会明确跳过；导入后执行完整测试。公开 CI 仅检查源码边界和不含素材的测试，不读取私有仓库，不上传 EXE、截图、预览或其他构建包。完整 EXE 只通过主人授权的 GitHub Release 发布，素材原文件仍保持私有。
+
+### 精简打包（默认）
+
+`Build-Windows.cmd` 先执行 `tools/prepare_slim_build.py`，再通过现有 spec 打包；只处理以下已验证的范围，不直接删除已安装库的 DLL。
+
+| 组件 | 固定处理方式 |
+| --- | --- |
+| Qt / PySide6 | `packaging_filter.py` 仅保留当前 QML 使用的 QtQml、QtCore、QtQuick、Controls Basic、Layouts、Window、Templates 等；剔除未使用模块、其他样式、调试描述与翻译；保留软件 OpenGL 回退及必要图像/字体插件。 |
+| NumPy | 复用同版 2.5.4 MSVC release+LTO 的无外部 BLAS/LAPACK wheel，保留数组运算、PocketFFT 和原 X86_V2/X86_V3 SIMD；解包到忽略目录 `build/numpy-slim`，仅供打包使用，不覆盖原 Python 环境。 |
+| FFmpeg | 使用已验证的 15,030,784 字节 Windows x64 精简构建；保留本程序视频解码、缩放、调色板与 GIF 转换需求。源码配方及许可见 `tools/build_ffmpeg_slim.sh` 和 `docs/third-party/ffmpeg/`。 |
+
+组件只需提前构建一次，后续打包复用。NumPy 配方为 `tools/Build-NumPySlim.ps1`，所需 MSVC / SDK、源码及许可见 `docs/third-party/numpy/README.txt`。指定组件后执行原入口：
+
+```powershell
+$env:RIO_NUMPY_WHEEL='<源码外目录>/numpy-2.5.4-cp312-cp312-win_amd64.whl'
+$env:RIO_FFMPEG='<精简FFmpeg目录>/ffmpeg.exe'
+./Build-Windows.cmd
+```
+
+也可直接传 `--numpy-wheel <wheel> --ffmpeg <ffmpeg.exe>`。省略 `RIO_FFMPEG` 时，检查并使用已导入的 `assets/media/ffmpeg.exe`；仍必须是精简版。脚本固定校验本次已测组件，不符则报错，避免意外退回完整依赖。NumPy wheel SHA-256 为 `4ce98489fdf3f2e53f058d7d80e3a95d76440c4092482840a625e281f7bded67`，FFmpeg 为 `5c342ee11ed7d24b1fe55fd4a3df06afa6e52f95af78674d5156b5db2ccee221`。输出仍是 `dist/RIO-System-Monitor-Qt.exe`；公开发布时使用原资产名 `RIO-System-Monitor.exe` 和 `SHA256SUMS.txt`。
+
+后续维护：普通代码/QML修改可复用组件；升级 NumPy、Python 主次版本或 Qt 时，重建对应组件、更新已测版本/校验值，并核对频谱或新增 QML 模块的打包需求。若以后加入大量矩阵计算/矩阵求解，无 BLAS 构建的性能需重新评估；当前频谱使用的 FFT 不依赖它。组件及工具链不进入源码 Git，用户无需安装任何新依赖，自动更新流程保持原样。
+
+上一轮同版组件试用：78,294,951→72,277,669 字节，减少 6,017,282 字节（7.69%）；20组频谱结果零差、3音乐帧相同，短测无性能退化。测试进程常驻内存仅约少1.2MiB，提交量下降不等于物理内存同量节省。rc0.1.11 已实际通过 `Build-Windows.cmd` 生成完整EXE：72,277,658字节，SHA-256 `416073b61367f14634511065e8b16e0fc7c283d88623117ef78b35f80199120b`；版本及480×480 demo快照通过，32个业务子模块、NumPy、Qt和FFmpeg与上一试用构建相同，温度助手沿用原脚本从未改源码重编译。相对rc0.1.10的108,662,543字节缩小约33.5%。公开发布区按主人要求只保留rc0.1.10和rc0.1.11，源码历史与标签保留。真实本地替换/重启待主人使用验证。
+
+记录：`ROUND-SCREEN-NUMPY-SLIM-20261024`、`ROUND-SCREEN-SLIM-PACKAGE-20261024`（私有根 README 的唯一变更记录）。
 
 ## 配置、安装与许可
 

@@ -1,4 +1,4 @@
-import io, struct, tempfile, threading, unittest, subprocess
+import io, os, struct, tempfile, threading, unittest, subprocess
 from pathlib import Path
 from unittest.mock import Mock,patch
 from PIL import Image
@@ -145,7 +145,7 @@ class MediaTests(unittest.TestCase):
         if not ffmpeg.is_file():self.skipTest('Private bundled video converter unavailable')
         with tempfile.TemporaryDirectory() as td:
             p=Path(td)/'clip.mp4'
-            subprocess.run([str(ffmpeg),'-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc2=size=96x64:rate=30','-t','0.5','-c:v','libx264','-pix_fmt','yuv420p',str(p)],check=True,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            subprocess.run([os.environ.get('RIO_TEST_FFMPEG_GENERATOR',str(ffmpeg)),'-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc2=size=96x64:rate=30','-t','0.5','-c:v','libx264','-pix_fmt','yuv420p',str(p)],check=True,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
             prepared=prepare_media(p,Path(td)/'job',ffmpeg)
             self.assertEqual(prepared.frames,15);self.assertEqual(prepared.duration_ms,500)
             self.assertLessEqual(len(prepared.gif),MAX_MEDIA_BYTES);self.assertTrue(prepared.gif.endswith(b';'))
@@ -160,7 +160,7 @@ class MediaTests(unittest.TestCase):
         if not ffmpeg.is_file():self.skipTest('Private bundled video converter unavailable')
         with tempfile.TemporaryDirectory() as td:
             p=Path(td)/'clip.mp4'
-            subprocess.run([str(ffmpeg),'-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc2=size=96x64:rate=30','-t','3','-c:v','libx264','-pix_fmt','yuv420p',str(p)],check=True,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            subprocess.run([os.environ.get('RIO_TEST_FFMPEG_GENERATOR',str(ffmpeg)),'-hide_banner','-loglevel','error','-y','-f','lavfi','-i','testsrc2=size=96x64:rate=30','-t','3','-c:v','libx264','-pix_fmt','yuv420p',str(p)],check=True,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
             self.assertLess(p.stat().st_size,MAX_MEDIA_BYTES)
             with self.assertRaisesRegex(ValueError,'3.4 MB'):prepare_media(p,Path(td)/'job',ffmpeg)
 
