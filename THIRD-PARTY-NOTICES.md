@@ -5,6 +5,8 @@
   `sensors/Build-Sensors.ps1`. No driver binary is tracked in this repository.
   See `docs/temperature-component.md` for sources and explicit installation behavior.
 - Local video conversion uses a separately supplied FFmpeg 6.1.1 executable.
+  The RIO slim variant uses unmodified upstream FFmpeg with decoder-only libaom
+  3.8.2 and zlib 1.3.1; their license and patent notices are retained alongside it.
   Full GPLv3 terms and build notices are in `docs/third-party/ffmpeg/`.
   The importer copies these notices into the local binary build. The owner has
   authorized full executable distribution through GitHub Releases; raw converter
@@ -34,3 +36,8 @@ relicense third-party materials.
 
 
 Music mode adds NumPy (BSD-3-Clause), PyAudioWPatch/PyAudio and PortAudio (MIT), and PyWinRT (MIT). The applicable upstream licenses must accompany redistributed binary bundles. Source references: https://numpy.org/doc/stable/license.html ; https://github.com/s0d3s/PyAudioWPatch/blob/master/LICENSE.txt ; https://github.com/pywinrt/pywinrt . LRCLIB is an optional external service, not bundled code. No LX Music source is copied.
+
+The optional same-version NumPy 2.5.4 slim build omits external BLAS/LAPACK.
+Original NumPy component licenses are in
+docs/third-party/numpy/ and bundled under licenses/numpy/. See its README for
+the unmodified source, build inputs and recipe.
