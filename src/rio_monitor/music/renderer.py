@@ -38,7 +38,9 @@ class MusicRenderer:
   if not Path(self.pixel).is_file():self.pixel=str(self.assets/'fonts/Born2bSporty.otf')
   self.chinese=next((str(p) for p in [self.assets/'fonts/NotoSansCJK-Regular.ttc',Path(os.environ.get('WINDIR','C:/Windows'))/'Fonts/msyh.ttc',Path('/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc')] if p.is_file()),self.pixel)
   path=self.assets/'rio-brand.png'
-  if path.exists():self.badge=Image.open(path).convert('RGBA').crop((8,88,248,168)).resize((96*S,32*S),Image.Resampling.LANCZOS)
+  baked=self.assets/'precomposed/music-badge.png'
+  if baked.is_file():self.badge=Image.open(baked).convert('RGBA')
+  elif path.exists():self.badge=Image.open(path).convert('RGBA').crop((8,88,248,168)).resize((96*S,32*S),Image.Resampling.LANCZOS)
   else:
    self.badge=Image.new('RGBA',(96*S,32*S),'#eadd3d');ImageDraw.Draw(self.badge).text((10,4),'RIO',font=ImageFont.load_default(size=40),fill='black')
  @lru_cache(maxsize=32)
@@ -78,7 +80,9 @@ class MusicRenderer:
  @lru_cache(maxsize=2)
  def private_record_art(self,name,size):
   try:
-   with Image.open(self.assets/'music'/name) as source:
+   path=self.assets/'precomposed'/name
+   if not path.is_file():path=self.assets/'music'/name
+   with Image.open(path) as source:
     if source.width*source.height>16000000:raise ValueError('Oversized artwork')
     return source.convert('RGBA').resize((size,size),Image.Resampling.LANCZOS)
   except (OSError,ValueError):

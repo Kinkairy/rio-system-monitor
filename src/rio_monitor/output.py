@@ -19,7 +19,8 @@ class ScreenOutput:
     def run(self):
         transport=None
         try:
-            transport=WinUSB(self.path);sender=FrameSender(transport);sender.lcd_info()
+            # Start with a full frame: LCD-info can stall even when the display can render.
+            transport=WinUSB(self.path);sender=FrameSender(transport)
             while not self.stop.is_set():
                 try:image=self.frames.get(timeout=.2)
                 except queue.Empty:continue

@@ -57,3 +57,30 @@ class RenderCacheInvariants(unittest.TestCase):
             renderer.render(samples, now=10)
             renderer.render(samples, now=10.1)
             self.assertEqual(chart.call_count, 1)
+
+
+    def test_precomposed_assets_preserve_rendered_frames(self):
+        import datetime, io, random, sys, tempfile
+        from rio_monitor.render_cache import Renderer
+        from rio_monitor.model import Sample
+        from rio_monitor.music.renderer import MusicRenderer
+        from rio_monitor.music.state import Track, Audio
+        with tempfile.TemporaryDirectory() as work, patch.object(sys, 'path', [str(ROOT/'tools')]+sys.path):
+            from prepare_fixed_layers import prepare, SOURCE_ONLY
+            assets=ROOT/'assets';runtime=prepare(assets,Path(work)/'runtime-assets')
+            for name in SOURCE_ONLY-{'rio-brand.png','private-manifest.json'}:
+                self.assertFalse((runtime/name).exists(),name)
+            self.assertEqual(Image.open(runtime/'rio-brand.png').size,(240,80))
+            plain,baked=Renderer(assets),Renderer(runtime)
+            plain.robot.rng=random.Random(17);baked.robot.rng=random.Random(17)
+            for index,value in enumerate((None,0,57,100,999999,32)):
+                now=10+index*.4
+                samples={key:Sample(value,now) for key in ('cpu','gpu','temperature','ram_used','ram_total','upload','download')}
+                kwargs=dict(now=now,wall=datetime.datetime(2026,10,25,12,index))
+                self.assertEqual(plain.render(samples,**kwargs).tobytes(),baked.render(samples,**kwargs).tobytes())
+            plain,baked=MusicRenderer(assets),MusicRenderer(runtime)
+            cover=io.BytesIO();Image.new('RGB',(200,180),'#63a8bc').save(cover,format='PNG')
+            for index in range(12):
+                now=20+index*.12
+                snapshot=dict(track=Track(title='A song that keeps scrolling '+str(index//5),artist='Artist',cover=cover.getvalue() if index>2 else b'',playing=True,position=1,observed=now,duration=180),audio=Audio(tuple([.6]*12),.65,now,'ready'),rows=(),lyric_status='loading')
+                self.assertEqual(plain.render(snapshot,now).tobytes(),baked.render(snapshot,now).tobytes())

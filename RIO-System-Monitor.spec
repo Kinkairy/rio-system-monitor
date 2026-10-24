@@ -10,7 +10,10 @@ if sys.platform=="win32":
     music_imports=collect_submodules("winrt")+collect_submodules("pyaudiowpatch")
     music_binaries=collect_dynamic_libs("pyaudiowpatch")
 root=Path(SPECPATH)
-a=Analysis([str(root/'launch.py')],pathex=[str(root/'src')],binaries=music_binaries,datas=[(str(root/'assets'),'assets'),(str(root/'docs/third-party'),'licenses'),(str(root/'THIRD-PARTY-NOTICES.md'),'licenses'),(str(root/'docs/distribution-licenses.md'),'licenses'),(str(root/'LICENSE'),'licenses/RIO')],hiddenimports=music_imports,hookspath=[],hooksconfig={},runtime_hooks=[],excludes=['tkinter','PIL.AvifImagePlugin','PIL._avif'],noarchive=False)
+sys.path.insert(0,str(root/'tools'))
+from prepare_fixed_layers import prepare
+runtime_assets=prepare(root/'assets',root/'build/runtime-assets')
+a=Analysis([str(root/'launch.py')],pathex=[str(root/'src')],binaries=music_binaries,datas=[(str(runtime_assets),'assets'),(str(root/'docs/third-party'),'licenses'),(str(root/'THIRD-PARTY-NOTICES.md'),'licenses'),(str(root/'docs/distribution-licenses.md'),'licenses'),(str(root/'LICENSE'),'licenses/RIO')],hiddenimports=music_imports,hookspath=[],hooksconfig={},runtime_hooks=[],excludes=['tkinter','PIL.AvifImagePlugin','PIL._avif'],noarchive=False)
 removed=[n for n,_,_ in list(a.binaries)+list(a.datas) if not keep(n)]
 a.binaries=[entry for entry in a.binaries if keep(entry[0])]
 a.datas=[entry for entry in a.datas if keep(entry[0])]

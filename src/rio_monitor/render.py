@@ -1,6 +1,6 @@
 from pathlib import Path
 from PIL import Image,ImageDraw,ImageFont,ImageChops
-import math,time,datetime,sys
+import math,time,datetime,sys,json
 from .model import Spring
 
 from .typography import RollingText
@@ -29,36 +29,42 @@ def complete_gauge_mask(mask):
 class Renderer:
     def __init__(self,assets=None,font_choice="born"):
         self.assets=Path(assets or (Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets'))
-        self.background=Image.open(self.assets/'background.png').convert('RGB')
+        baked=self.assets/'precomposed';ready=(baked/'monitor.png').is_file()
+        self.background=Image.open(baked/'monitor.png' if ready else self.assets/'background.png').convert('RGB')
         self.clockfont=ImageFont.truetype(str(self.assets/'clock.otf'),33)
-        self.ram_separator=Image.open(self.assets/'ram-separator.png').convert('RGBA')
         self.robot = RobotAnimator(self.assets)
-        mask=complete_gauge_mask(Image.open(self.assets/'gauge-mask.png').convert('L'))
-        self.gauge_box=mask.getbbox()
-        self.gauge_mask=mask.crop(self.gauge_box)
-        gx,gy,_,_=self.gauge_box
-        self.temperature_fill=Image.new('RGB',(868,128),(0,230,130))
-        self.temperature_fill_alpha=Image.new('L',self.temperature_fill.size)
-        fill_draw=ImageDraw.Draw(self.temperature_fill_alpha)
-        for y in range(128):fill_draw.line((0,y,867,y),fill=round(180*(127-y)/127))
-        self.gauge_colors=Image.new('RGB',self.gauge_mask.size)
-        gd=ImageDraw.Draw(self.gauge_colors)
-        # Fixed green/yellow/orange/red temperature scale, same segmented mask.
-        stops=[(0,(0,255,184)),(.32,(174,255,35)),(.55,(255,230,32)),(.78,(255,148,25)),(1,(255,45,50))]
-        for degree in range(180,361):
-            fraction=(degree-180)/180
-            for (a,ca),(b,cb) in zip(stops,stops[1:]):
-                if a<=fraction<=b:
-                    t=(fraction-a)/(b-a);color=tuple(round(x+(y-x)*t) for x,y in zip(ca,cb));break
-            gd.pieslice((60-gx,25-gy,1195-gx,1159-gy),degree,degree+1,fill=color)
-        self.gauge_dim=self.gauge_colors.point(lambda p:round(p*.23))
-        self.robot_plate=Image.new('RGBA',(133,133))
-        ImageDraw.Draw(self.robot_plate).ellipse((0,0,132,132),fill=(0,24,16,255))
-        grid=Image.new('RGBA',(132,132));gg=ImageDraw.Draw(grid)
-        for pos in range(0,132,22):
-            gg.line((pos,0,pos,132),fill=(7,51,35,255));gg.line((0,pos,132,pos),fill=(7,51,35,255))
-        clip=Image.new('L',(132,132));ImageDraw.Draw(clip).ellipse((0,0,131,131),fill=255)
-        self.robot_plate.paste(grid,(0,0),clip)
+        if ready:
+            self.gauge_box=tuple(json.loads((baked/'layers.json').read_text())['gauge_box'])
+            for attr,name,mode in (('gauge_mask','gauge-mask.png','L'),('gauge_colors','gauge-colors.png','RGB'),('gauge_dim','gauge-dim.png','RGB'),('temperature_fill','history-fill.png','RGB'),('temperature_fill_alpha','history-alpha.png','L')):
+                with Image.open(baked/name) as image:setattr(self,attr,image.convert(mode))
+            self.robot_plate=None
+        else:
+            mask=complete_gauge_mask(Image.open(self.assets/'gauge-mask.png').convert('L'))
+            self.gauge_box=mask.getbbox()
+            self.gauge_mask=mask.crop(self.gauge_box)
+            gx,gy,_,_=self.gauge_box
+            self.temperature_fill=Image.new('RGB',(868,128),(0,230,130))
+            self.temperature_fill_alpha=Image.new('L',self.temperature_fill.size)
+            fill_draw=ImageDraw.Draw(self.temperature_fill_alpha)
+            for y in range(128):fill_draw.line((0,y,867,y),fill=round(180*(127-y)/127))
+            self.gauge_colors=Image.new('RGB',self.gauge_mask.size)
+            gd=ImageDraw.Draw(self.gauge_colors)
+            # Fixed green/yellow/orange/red temperature scale, same segmented mask.
+            stops=[(0,(0,255,184)),(.32,(174,255,35)),(.55,(255,230,32)),(.78,(255,148,25)),(1,(255,45,50))]
+            for degree in range(180,361):
+                fraction=(degree-180)/180
+                for (a,ca),(b,cb) in zip(stops,stops[1:]):
+                    if a<=fraction<=b:
+                        t=(fraction-a)/(b-a);color=tuple(round(x+(y-x)*t) for x,y in zip(ca,cb));break
+                gd.pieslice((60-gx,25-gy,1195-gx,1159-gy),degree,degree+1,fill=color)
+            self.gauge_dim=self.gauge_colors.point(lambda p:round(p*.23))
+            self.robot_plate=Image.new('RGBA',(133,133))
+            ImageDraw.Draw(self.robot_plate).ellipse((0,0,132,132),fill=(0,24,16,255))
+            grid=Image.new('RGBA',(132,132));gg=ImageDraw.Draw(grid)
+            for pos in range(0,132,22):
+                gg.line((pos,0,pos,132),fill=(7,51,35,255));gg.line((0,pos,132,pos),fill=(7,51,35,255))
+            clip=Image.new('L',(132,132));ImageDraw.Draw(clip).ellipse((0,0,131,131),fill=255)
+            self.robot_plate.paste(grid,(0,0),clip)
         self.digits=RollingText(self.assets,font_choice);self.springs={k:Spring() for k in ('cpu','gpu','ram','temperature')}
         self.clock_variable=self.digits.font(next(n for n in range(80,10,-1) if self.digits.font(n).getbbox('0')[3]-self.digits.font(n).getbbox('0')[1]<=self.clockfont.getbbox('0')[3]-self.clockfont.getbbox('0')[1]))
         self.charts={k:UsageChart() for k in ("cpu","gpu")}
@@ -162,7 +168,7 @@ class Renderer:
         if pts:
             x,y=pts[-1];d.ellipse((x-6,y-6,x+6,y+6),fill='#ffe533')
         # Original-art in-betweens from a219b700; fixed base and anchor.
-        im.paste(self.robot_plate,(904,385),self.robot_plate)
+        if self.robot_plate is not None:im.paste(self.robot_plate,(904,385),self.robot_plate)
         self.robot.draw(im,now)
         self.weather.draw(im,weather,now)
         self.clock(im,wall)

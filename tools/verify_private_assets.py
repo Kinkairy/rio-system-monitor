@@ -15,7 +15,10 @@ def verify(root=ROOT/'assets'):
         raise ValueError('Private assets missing. See README for tools/import_private_assets.py and its startup-loop/ffmpeg inputs.')
     data = json.loads(manifest.read_text(encoding='utf-8-sig'))
     rows = {r['path']:r for r in data['files']}
-    for name in REQUIRED:
+    required=REQUIRED
+    if data.get('asset_layout')=='precomposed-v1':
+        required=tuple(n for n in REQUIRED if n not in ('background.png','gauge-mask.png','layout.json','ram-separator.png','robot-front.png','robot-left.png','robot-right.png'))+tuple('precomposed/'+n for n in ('monitor.png','gauge-mask.png','gauge-colors.png','gauge-dim.png','history-fill.png','history-alpha.png','music-badge.png','default-record.png','record-label.png','layers.json'))
+    for name in required:
         path = root/name
         if name not in rows or not path.is_file(): raise ValueError('Missing private asset: '+name)
         raw = path.read_bytes()
