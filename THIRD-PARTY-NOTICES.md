@@ -22,10 +22,18 @@
   explicit author-page OFL grant is recorded here rather than concealing it.
 - Noto Sans CJK JP (assets/clock.otf): see assets/FONT-LICENSE.txt.
 - Pixel Operator HB: see assets/fonts/PixelOperator-LICENSE.txt (CC0).
-- Python, Pillow, psutil, PySide6/Qt and PyInstaller retain upstream licenses.
-  Binary redistribution must include applicable dependency notices and satisfy
-  Qt/PySide LGPL obligations. This source-preparation snapshot is not a completed
-  binary license/compliance audit or a signed release.
+- Qt, PySide6 and Shiboken 6.12.0 are copyright The Qt Company Ltd. and
+  other contributors. RIO uses the unmodified official Windows x64 dynamic
+  libraries under LGPLv3. The full LGPLv3/GPLv3 terms, additional collected
+  plugin terms, copyright notices, exact corresponding-source downloads and
+  SHA-256 values are in `docs/third-party/qt/`. Software OpenGL (Mesa/LLVM)
+  and the Qt image/third-party component notices are retained there too.
+  See `docs/distribution-licenses.md` for replacing/rebuilding these libraries.
+  Reverse engineering to debug LGPL library modifications is permitted.
+- Python, Pillow, psutil and PyInstaller retain their upstream licenses.
+  Supplementary release license ZIPs also retain text notices from the exact
+  distributed EXE. This focused Qt/PySide/FFmpeg material update is not a
+  comprehensive legal audit of every dependency or a signed release.
 
 RIO artwork, fonts, icons and animation source materials are held in a private
 repository. Authorized complete executables may be distributed as Release assets;

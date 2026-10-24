@@ -60,3 +60,21 @@ Upstream source: https://github.com/FFmpeg/FFmpeg/tree/n6.1.1
 Complete program EXEs may be published through the existing GitHub Releases
 channel when authorized. Original artwork remains private; no binary or build
 toolchain is added to the source repository by this trial.
+
+Release source access (2026-10-25 supplement)
+-------------------------------------------
+The exact three upstream source archives listed above, the build recipe and
+notices are available together, without artwork or font files, at:
+https://github.com/Kinkairy/rio-system-monitor/releases/download/rc0.1.11/RIO-FFmpeg-6.1.1-slim-sources.zip
+These sources correspond to the rc0.1.11 slim converter only.
+
+For the older rc0.1.10 converter, GYAN-6.1.1-README.txt is the original provider
+README extracted from ffmpeg-6.1.1-essentials_build.7z. It records the exact
+FFmpeg source commit e38092ef93 and external library versions. Provider release:
+https://github.com/GyanD/codexffmpeg/releases/tag/6.1.1
+FFmpeg source: https://github.com/FFmpeg/FFmpeg/tree/e38092ef93
+The legacy build has many external libraries; do not substitute the slim
+three-archive bundle for that build's complete corresponding sources.
+
+Keep the release license ZIP alongside redistributed EXEs. Future builds also
+carry these documents under licenses/ in addition to the existing media notices.

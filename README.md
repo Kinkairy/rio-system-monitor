@@ -173,5 +173,5 @@ $env:RIO_FFMPEG='<精简FFmpeg目录>/ffmpeg.exe'
 
 配置为 `%LOCALAPPDATA%/RIO-Monitor/settings.json`，JSON 格式。成功写入的预览记录位于同目录的 `screen-content/`，每台已写入设备包含 GIF 与校验 JSON；本地导入的歌词位于 `lyrics/`。字体、默认动画、音乐接口依赖和转换器包含在本地 EXE 中，运行时有临时解包与预览文件。选择安装温度组件后，另有 `%ProgramFiles%/RIO-Monitor/Temperature` 和 `%ProgramData%/RIO-Monitor` 中的服务/数据文件。退出、关闭温度开关和删除程序各自的行为详见组件文档。
 
-原代码采用 MIT 许可，私有素材和第三方依赖不因此改为 MIT。见 [第三方说明](THIRD-PARTY-NOTICES.md) 和 `docs/third-party/ffmpeg/`。主程序开发构建未签名；签名 PawnIO 驱动不代表 GUI 已签名。源代码测试、真实设备通信与用户视觉验收分别记录，不以其中之一代替其他结果。
+原代码采用 MIT 许可，私有素材和第三方依赖不因此改为 MIT。见 [第三方说明](THIRD-PARTY-NOTICES.md) 与 [发行许可、对应源码和 Qt 库替换说明](docs/distribution-licenses.md)。Qt/PySide 和 FFmpeg 的完整许可、版权及准确源入口随发行提供；以后打包会自动生成 `dist/RIO-System-Monitor-<版本>-licenses.zip` 并把材料带进 EXE。现有 rc0.1.10/11 只补充 Release 附件，不改变版本、标签或已发布的 EXE。主程序开发构建未签名；签名 PawnIO 驱动不代表 GUI 已签名。源代码测试、真实设备通信与用户视觉验收分别记录，不以其中之一代替其他结果。
 

@@ -13,3 +13,5 @@ for /f "delims=" %%I in ('python -c "import sys;print(sys.base_prefix)"') do set
 set "PATH=%RIO_PYTHON_DIR%;%RIO_PYTHON_BASE%;%SystemRoot%\System32;%SystemRoot%"
 set "PYTHONPATH=%~dp0build\numpy-slim"
 "%RIO_PYTHON_DIR%\python.exe" -m PyInstaller --noconfirm --clean RIO-System-Monitor.spec
+if errorlevel 1 exit /b 1
+"%RIO_PYTHON_DIR%\python.exe" tools\package_license_materials.py
