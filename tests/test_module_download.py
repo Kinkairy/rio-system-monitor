@@ -45,7 +45,8 @@ class PackageTests(TemporaryTest):
         folder, dist = runtime(self.tmp), self.tmp/'dist'
         manifest = package_modules.package(ROOT/'src', folder, dist, 'rc9.9.9')
         raw = (dist/'RIO-Module-Fangcun.zip').read_bytes()
-        self.assertEqual(manifest['modules']['fangcun'], dict(asset='RIO-Module-Fangcun.zip', size=len(raw), sha256=hashlib.sha256(raw).hexdigest()))
+        self.assertEqual(manifest['modules']['fangcun'], dict(asset='RIO-Module-Fangcun.zip', size=len(raw), sha256=hashlib.sha256(raw).hexdigest(), api=extensions.MODULE_API))
+        self.assertEqual(json.loads(zipfile.ZipFile(io.BytesIO(raw)).read('module.json')), dict(name='fangcun', package='rio_fangcun', version='rc9.9.9', api=extensions.MODULE_API))
         names = zipfile.ZipFile(io.BytesIO(raw)).namelist()
         self.assertTrue({'module.json','rio_fangcun/module.py','rio_fangcun/ui/FangcunWindow.qml'} <= set(names))
         self.assertTrue({'assets/fangcun/runtime.mjs','assets/fangcun-ui/inventory-v1.png','assets/fangcun-gourd-v4.png'} <= set(names))
@@ -103,6 +104,7 @@ class Store:
         self.name='demo'; self.entry={'size':58_000_000} if entry else None; self.ready=ready
         self.gate=threading.Event(); self.fail=False; self.installs=0
     def location(self): return Path('module-assets') if self.ready else None
+    def reject(self): return False
     def install(self, stop, progress):
         self.installs+=1; progress(29,58)
         while not self.gate.wait(.01):

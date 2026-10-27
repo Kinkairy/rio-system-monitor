@@ -9,8 +9,9 @@ API_URL=f'https://api.github.com/repos/{REPOSITORY}/releases/latest'
 
 
 def version_key(value):
-    match=re.fullmatch(r'(?:rc|v)?(\d+)\.(\d+)(?:\.(\d+))?',str(value))
-    return tuple(int(part or 0) for part in match.groups()) if match else (0,0,0)
+    # A fourth part numbers module-only updates made on top of a program version, e.g. rc0.1.16.1.
+    match=re.fullmatch(r'(?:rc|v)?(\d+)\.(\d+)(?:\.(\d+))?(?:\.(\d+))?',str(value))
+    return tuple(int(part or 0) for part in match.groups()) if match else (0,0,0,0)
 
 
 def latest_asset(current=__version__):
@@ -65,20 +66,24 @@ try {
         }
     }
     $target=[IO.Path]::GetFullPath([string]$data.target)
-    $staged=[IO.Path]::GetFullPath([string]$data.staged)
     if ([IO.Path]::GetExtension($target) -ne '.exe') { throw 'Invalid update target' }
-    $stream=[IO.File]::OpenRead($staged)
-    $sha=[Security.Cryptography.SHA256]::Create()
-    try { $actual=[BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant() }
-    finally { $stream.Dispose();$sha.Dispose() }
-    if ($actual -ne $data.sha256) { throw 'Update changed' }
-    $replacement=$target+'.update'
-    Copy-Item -LiteralPath $staged -Destination $replacement -Force
-    [IO.File]::Replace($replacement,$target,[NullString]::Value)
-    Remove-Item -LiteralPath $staged -Force
+    # Without a staged program this only restarts RIO, so updated modules load.
+    if ($data.staged) {
+        $staged=[IO.Path]::GetFullPath([string]$data.staged)
+        $stream=[IO.File]::OpenRead($staged)
+        $sha=[Security.Cryptography.SHA256]::Create()
+        try { $actual=[BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant() }
+        finally { $stream.Dispose();$sha.Dispose() }
+        if ($actual -ne $data.sha256) { throw 'Update changed' }
+        $replacement=$target+'.update'
+        Copy-Item -LiteralPath $staged -Destination $replacement -Force
+        [IO.File]::Replace($replacement,$target,[NullString]::Value)
+        Remove-Item -LiteralPath $staged -Force
+    }
     $env:PYINSTALLER_RESET_ENVIRONMENT='1'
-    Start-Process -FilePath $target -ArgumentList '--show-settings' -WindowStyle Hidden
-    @{status='installed';version=$data.version} | ConvertTo-Json | Set-Content -LiteralPath $data.status_path -Encoding UTF8
+    if ($data.arguments) { Start-Process -FilePath $target -ArgumentList $data.arguments -WindowStyle Hidden }
+    else { Start-Process -FilePath $target -WindowStyle Hidden }
+    @{status=$data.status;version=$data.version} | ConvertTo-Json | Set-Content -LiteralPath $data.status_path -Encoding UTF8
 } catch {
     @{status='install_failed';version=$data.version;error=$_.Exception.Message} | ConvertTo-Json | Set-Content -LiteralPath $data.status_path -Encoding UTF8
 } finally {
@@ -88,12 +93,14 @@ try {
 """
 
 
-def launch_install(staged,target,directory,version,wait_pids):
+def launch_install(staged,target,directory,version,wait_pids,arguments=('--show-settings',)):
+    """Replace target with staged after the given processes exit, then start it; staged=None only restarts."""
     directory=Path(directory);directory.mkdir(parents=True,exist_ok=True)
     script=directory/'install-update.ps1';plan=directory/'install-update.json'
     script.write_text(INSTALL_SCRIPT,encoding='utf-8-sig')
-    data=dict(staged=str(Path(staged).resolve()),target=str(Path(target).resolve()),version=version,
-              sha256=file_hash(staged),wait_pids=wait_pids,status_path=str((directory/'status.json').resolve()))
+    data=dict(staged=str(Path(staged).resolve()) if staged else '',target=str(Path(target).resolve()),version=version,
+              sha256=file_hash(staged) if staged else '',wait_pids=wait_pids,arguments=list(arguments),
+              status='installed' if staged else 'restarted',status_path=str((directory/'status.json').resolve()))
     plan.write_text(json.dumps(data,ensure_ascii=False),encoding='utf-8-sig')
     powershell=Path(os.environ.get('SYSTEMROOT','C:/Windows'))/'System32/WindowsPowerShell/v1.0/powershell.exe'
     return subprocess.Popen([str(powershell),'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(script),'-Plan',str(plan)],
@@ -101,9 +108,12 @@ def launch_install(staged,target,directory,version,wait_pids):
 
 
 class AutoUpdater:
-    def __init__(self,directory):
+    def __init__(self,directory,modules=None):
         self.directory=Path(directory);self.stop=threading.Event();self.worker=None;self.pending=None
         self.lock=threading.Lock();self.state=dict(state='idle',connection='unknown',progress=0)
+        # modules(stop) installs module updates after each program check and returns True when a restart would load them.
+        # restart: such packages are installed; relaunch: the host is exiting to load them.
+        self.modules=modules;self.restart=False;self.relaunch=False
     def snapshot(self):
         with self.lock:return dict(self.state)
     def update(self,**values):
@@ -114,6 +124,13 @@ class AutoUpdater:
             self.state.update(state='checking',progress=0)
             self.worker=threading.Thread(target=self.run,daemon=True,name='RIO-update');self.worker.start()
     def run(self):
+        self.program()
+        # A new program brings its own module packages, so modules update only while the program is current.
+        if self.modules and not self.pending and not self.stop.is_set():
+            try:
+                if self.modules(self.stop):self.restart=True
+            except Exception:pass
+    def program(self):
         try:
             asset=latest_asset()
             self.update(connection='connected')
@@ -135,4 +152,7 @@ class AutoUpdater:
         if self.pending:
             staged,version=self.pending
             try:launch_install(staged,sys.executable,self.directory,version,[os.getpid(),os.getppid()])
+            except OSError:pass
+        elif self.restart and self.relaunch:
+            try:launch_install(None,sys.executable,self.directory,__version__,[os.getpid(),os.getppid()],arguments=())
             except OSError:pass

@@ -1,8 +1,8 @@
 import hashlib,io,json,os,subprocess,tempfile,threading,time,unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock,patch
 from urllib.error import URLError
-from rio_monitor.updater import ASSET_NAME,AutoUpdater,download_asset,latest_asset,launch_install
+from rio_monitor.updater import ASSET_NAME,AutoUpdater,download_asset,latest_asset,launch_install,version_key
 
 
 class UpdateTests(unittest.TestCase):
@@ -65,6 +65,41 @@ class UpdateTests(unittest.TestCase):
      updater.check();updater.worker.join(3)
      self.assertFalse(updater.worker.is_alive());self.assertEqual(updater.snapshot()['state'],state)
      self.assertEqual(updater.snapshot()['connection'],connection);self.assertIsNone(updater.pending)
+ def test_module_update_versions_order_after_their_program_version(self):
+  self.assertLess(version_key('rc0.1.16'),version_key('rc0.1.16.1'));self.assertLess(version_key('rc0.1.16.1'),version_key('rc0.1.16.2'))
+  self.assertLess(version_key('rc0.1.16.9'),version_key('rc0.1.17'));self.assertEqual(version_key('rc0.1'),(0,1,0,0))
+  self.assertEqual(version_key('modules'),(0,0,0,0))
+ def test_module_updates_run_after_a_current_program_check_and_restart_only_on_request(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   calls=[];updater=AutoUpdater(tmp,modules=lambda stop:calls.append(stop) or True)
+   with patch('rio_monitor.updater.latest_asset',return_value=None):updater.check();updater.worker.join(3)
+   self.assertEqual(calls,[updater.stop]);self.assertTrue(updater.restart);self.assertEqual(updater.snapshot()['state'],'latest')
+   # A staged program wins: its own packages replace the modules, so they are not checked.
+   pending=AutoUpdater(tmp,modules=lambda stop:calls.append(stop) or True)
+   with patch('rio_monitor.updater.latest_asset',return_value=self.asset()),patch('rio_monitor.updater.download_asset',return_value=Path(tmp)/'new.exe'):
+    pending.check();pending.worker.join(3)
+   self.assertEqual(len(calls),1);self.assertFalse(pending.restart)
+   failing=AutoUpdater(tmp,modules=Mock(side_effect=OSError('offline')))
+   with patch('rio_monitor.updater.latest_asset',side_effect=URLError('offline')):failing.check();failing.worker.join(3)
+   self.assertFalse(failing.restart);failing.modules.assert_called_once()
+   with patch('rio_monitor.updater.launch_install') as install:
+    updater.install_on_exit();install.assert_not_called()  # Quitting by hand does not restart RIO.
+    updater.relaunch=True;updater.install_on_exit()
+   self.assertIsNone(install.call_args.args[0]);self.assertEqual(install.call_args.kwargs['arguments'],())
+ @unittest.skipUnless(os.name=='nt','Windows update handoff')
+ def test_windows_restart_without_a_staged_program_starts_the_same_file(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);target=root/'RIO.exe';source=root/'restart.cs'
+   source.write_text('using System; using System.IO; class Restart { static void Main(string[] args) { File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"restarted.txt"),string.Join(" ",args)+"|"+Environment.GetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT")); } }',encoding='utf-8')
+   compiler=Path(os.environ['SYSTEMROOT'])/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+   subprocess.run([str(compiler),'/nologo','/target:winexe','/out:'+str(target),str(source)],check=True,capture_output=True,creationflags=subprocess.CREATE_NO_WINDOW)
+   content=target.read_bytes()
+   helper=launch_install(None,target,root/'updates','rc0.1.2',[],arguments=())
+   self.assertEqual(helper.wait(10),0);self.assertEqual(target.read_bytes(),content)
+   self.assertEqual(json.loads((root/'updates/status.json').read_text(encoding='utf-8-sig'))['status'],'restarted')
+   receipt=root/'restarted.txt';deadline=time.monotonic()+5
+   while not receipt.exists() and time.monotonic()<deadline:time.sleep(.05)
+   self.assertEqual(receipt.read_text(),'|1')
  @unittest.skipUnless(os.name=='nt','Windows update handoff')
  def test_windows_handoff_waits_for_exit_then_replaces_and_restarts_the_program(self):
   with tempfile.TemporaryDirectory() as tmp:

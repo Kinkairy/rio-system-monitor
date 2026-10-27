@@ -52,6 +52,16 @@ class BridgeTests(unittest.TestCase):
    self.b.storage.update(busy=False);self.b.monitor.busy=True
    self.b.consume();exit.assert_not_called()
    self.b.monitor.busy=False;self.b.consume();self.b.consume();exit.assert_called_once()
+ def test_installed_module_updates_restart_once_blackshark_is_idle(self):
+  from rio_monitor.updater import AutoUpdater
+  self.b.capture=False;self.b.updater=AutoUpdater('unused-updates');self.b.updater.update(state='latest')
+  shark=Mock();shark.runtime.snapshot.return_value={'busy':True};self.b.blackshark_module=shark
+  with patch.object(self.b,'exit') as exit:
+   self.b.consume();exit.assert_not_called()
+   self.b.updater.restart=True;self.b.consume();exit.assert_not_called();self.assertFalse(self.b.updater.relaunch)
+   shark.runtime.snapshot.return_value={'busy':False};self.b.consume();self.b.consume()
+   exit.assert_called_once();self.assertTrue(self.b.updater.relaunch)
+  self.b.blackshark_module=None
  def test_rotation_applies_before_debounced_save_without_weather_restart(self):
   self.b.capture=False
   with patch('rio_monitor.qt_app.save') as save:

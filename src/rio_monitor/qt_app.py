@@ -23,7 +23,7 @@ from .music.renderer import MusicRenderer
 from .music.state import AutomaticMusicView
 from .view_transition import ViewTransition
 from .fangcun_host import FangcunHost
-from .extensions import Extension,ModuleStore,read_manifest
+from .extensions import Extension,ModuleStore,read_manifest,update_modules
 from .ui import install_ui
 
 @lru_cache(maxsize=2)
@@ -315,8 +315,10 @@ class Bridge(QObject):
   snapshot=self.monitor.snapshot()
   if snapshot!=self.monitor_snapshot:
    self.monitor_snapshot=snapshot;self.applySettings(temperature_monitor=snapshot['enabled']);self.changed.emit()
-  if self.updater and not self.capture and self.update_snapshot['state']=='ready' and not self.update_exit_started and not storage_snapshot['busy'] and not snapshot['busy']:
-   self.update_exit_started=True;self.exit();return
+  # A staged program or installed module updates restart RIO once screen writes, temperature and BlackShark work are idle.
+  blackshark_busy=self.blackshark_module is not None and self.blackshark_module.runtime.snapshot()['busy']
+  if self.updater and not self.capture and (self.update_snapshot['state']=='ready' or self.updater.restart) and not self.update_exit_started and not storage_snapshot['busy'] and not snapshot['busy'] and not blackshark_busy:
+   self.update_exit_started=True;self.updater.relaunch=True;self.exit();return
   if self.mode=='auto' and not self._city and self.weather.location:
    self._city=self.weather.location[2].split(',')[0];self.changed.emit()
   while not self.mail.empty():
@@ -359,7 +361,8 @@ def main():
  app=QApplication(sys.argv);app.setQuitOnLastWindowClosed(False);app.setApplicationName('RIO System Monitor');app.setApplicationVersion(__version__);app.setFont(QFont('Segoe UI',10))
  assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets';app.setWindowIcon(QIcon(str(assets/'rio-icon.ico')))
  from .updater import AutoUpdater
- updater=AutoUpdater(config_path().parent/'updates') if getattr(sys,'frozen',False) and not capture_mode and not args.self_test else None
+ # Module-only updates are checked with the program's; bridge is bound below, before the first check runs.
+ updater=AutoUpdater(config_path().parent/'updates',modules=lambda stop:update_modules(bridge.extensions,stop)) if getattr(sys,'frozen',False) and not capture_mode and not args.self_test else None
  settings=Settings(weather_mode='off',language='zh',game_enabled=False) if capture_mode else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not capture_mode);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets,cache_dir=None if capture_mode else config_path().parent/'screen-content');music=Music(config_path().parent/'lyrics',settings.music_enabled,settings.music_online_lyrics,settings.music_source,start=not capture_mode);bridge=Bridge(app,settings,weather,provider,capture_mode,monitor=monitor,storage=storage,music=music,updater=updater)
  engine=QQmlApplicationEngine();install_ui(engine,assets);bridge.ui_engine=engine;game_provider=Frames()
  save_path=(args.fangcun_capture or args.ui_capture or config_path().parent)/'fangcun-save.json'
@@ -367,11 +370,14 @@ def main():
   from rio_fangcun import FangcunModule
   game=FangcunModule(FangcunHost(bridge,engine),module_assets,save_path);bridge.fangcun=game;bridge.game=game.controller
   if bridge.win is not None:game.attach_desktop()
+ def load_blackshark(module_assets):
+  import rio_blackshark  # Importing at load lets a broken module update fall back to the package before it.
+  bridge.resumeBlackShark()
  # Packaged builds download modules on demand; source runs import them from src/. Capture modes never download.
  manifest=read_manifest(assets);modules=config_path().parent/'modules'
  bridge.extensions=dict(
   fangcun=Extension(ModuleStore('fangcun',modules,manifest,assets),is_on=lambda:bridge.s.game_enabled,load=load_fangcun,set_on=lambda value:bridge.game.setEnabled(value),open_window=lambda:bridge.game.openPanel(),allow_download=not capture_mode),
-  blackshark=Extension(ModuleStore('blackshark',modules,manifest,assets),is_on=lambda:bridge.s.blackshark_enabled,load=lambda module_assets:bridge.resumeBlackShark(),set_on=bridge.setBlackSharkEnabled,open_window=bridge.openBlackShark,allow_download=not capture_mode))
+  blackshark=Extension(ModuleStore('blackshark',modules,manifest,assets),is_on=lambda:bridge.s.blackshark_enabled,load=load_blackshark,set_on=bridge.setBlackSharkEnabled,open_window=bridge.openBlackShark,allow_download=not capture_mode))
  if args.fangcun_capture:
   from .fangcun_capture import CaptureOutput
   session._enumerator=lambda:['offline-capture'];session._output_factory=CaptureOutput
