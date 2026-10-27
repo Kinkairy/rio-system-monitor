@@ -16,6 +16,9 @@ class Writer:
 
 
 class ReconnectTests(unittest.TestCase):
+    def setUp(self):
+        delay=patch.object(ScreenOutput,'initialization_delay',0);delay.start();self.addCleanup(delay.stop)
+
     def test_hidden_render_demand_waits_for_queue_space_and_stops_with_writer(self):
         entered=threading.Event();release=threading.Event();sender=Mock()
         sender.send.side_effect=lambda pixels:(entered.set(),release.wait(2))
@@ -34,7 +37,7 @@ class ReconnectTests(unittest.TestCase):
             finally:release.set();self.assertTrue(session.close())
         self.assertFalse(session.needs_frame)
         usb.return_value.reset_pipes.assert_not_called()
-        sender.lcd_info.assert_not_called()
+        sender.lcd_info.assert_called_once()
 
     def test_missing_device_retries_with_backoff_then_connects_new_path(self):
         paths=[];created=[]
@@ -110,7 +113,7 @@ class ReconnectTests(unittest.TestCase):
                 self.assertTrue(entered.wait(1));self.assertFalse(output.finished.is_set())
             finally:release.set();self.assertTrue(output.close())
         self.assertTrue(output.finished.is_set());self.assertEqual(output.error,'device gone')
-        transport.close.assert_called_once();sender.send.assert_called_once();sender.lcd_info.assert_not_called()
+        transport.close.assert_called_once();sender.send.assert_called_once();sender.lcd_info.assert_called_once()
         self.assertLess(transport.mock_calls.index(unittest.mock.call.reset_pipes()),transport.mock_calls.index(unittest.mock.call.close()))
 
     def test_timeout_clears_pipes_before_reconnect_and_frames_resume_without_replug(self):
@@ -139,4 +142,4 @@ class ReconnectTests(unittest.TestCase):
         with patch('rio_monitor.output.WinUSB',return_value=transport),patch('rio_monitor.output.FrameSender',return_value=sender):
             output=ScreenOutput('device');output.submit(Image.new('RGB',(480,480)));self.assertTrue(output.finished.wait(1));self.assertTrue(output.close())
         self.assertIn('USB timeout',output.error);self.assertIn('USB pipe reset failed: device removed',output.error)
-        transport.close.assert_called_once();sender.send.assert_called_once();sender.lcd_info.assert_not_called()
+        transport.close.assert_called_once();sender.send.assert_called_once();sender.lcd_info.assert_called_once()

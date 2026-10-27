@@ -1,143 +1,28 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Rio.UI 1.0 as Rio
 
-ApplicationWindow {
+Rio.PanelWindow {
  id: win
- width: 448; height: 675; visible: true; color: "transparent"
- flags: Qt.Window | Qt.FramelessWindowHint
+ language: bridge.language
+ heading: tr("Settings","设置")
  title: "RIO System Monitor"
- property bool zh: bridge.language === "zh"
- function tr(en, cn) { return zh ? cn : en }
- onClosing: function(close) { close.accepted = false; bridge.hideWindow() }
+ onCloseRequested: bridge.hideWindow()
+ onLanguageRequested: function(value){bridge.setLanguage(value)}
  onVisibleChanged: bridge.setPreviewVisible(visible)
- font.family: win.zh ? "Microsoft YaHei UI" : "Segoe UI"
- font.pixelSize: 13
- component RioText: Text { font.family: win.zh ? "Microsoft YaHei UI" : "Segoe UI" }
- component EnglishText: RioText { font.family: "Segoe UI" }
- component SoftShadow: Item {
-  property bool pressed: false
-  property real cornerRadius: 8
-  Rectangle { x: -1; y: 2; width: parent.width+2; height: parent.height+2; radius: parent.cornerRadius+1; color: "black"; opacity: parent.pressed ? 0.06 : 0.12 }
-  Rectangle { y: 2; width: parent.width; height: parent.height; radius: parent.cornerRadius; color: "black"; opacity: parent.pressed ? 0.08 : 0.18 }
- }
- component ActionButton: Button {
-  id: b
-  property bool fieldStyle: false
-  property color fill: fieldStyle ? "#11171b" : "#24282b"
-  property color ink: "#e5e8e9"
-  property bool showOutline: true
-  property color hoverFill: fieldStyle || fill.a === 0 ? "#303b41" : Qt.lighter(fill,1.32)
-  leftPadding: fieldStyle ? 12 : 6; rightPadding: fieldStyle ? 12 : 6
-  hoverEnabled: true
-  opacity: enabled ? 1 : 0.42
-  implicitHeight: 38
-  background: Item {
-   SoftShadow { objectName: "buttonShadow"; anchors.fill: parent; pressed: b.down; visible: b.fill.a>0 || b.hovered || b.down }
-   Rectangle { objectName: "buttonSurface"; anchors.fill: parent; radius: 8; color: b.down ? Qt.darker(b.hoverFill,1.18) : b.hovered ? b.hoverFill : b.fill; border.width: b.showOutline && (b.fieldStyle || b.hovered || b.activeFocus) ? 1 : 0; border.color: b.hovered || b.activeFocus ? "#a7eb52" : "#354047"; Behavior on color { ColorAnimation { duration: 100 } } }
-  }
-  contentItem: RioText { text: b.text; color: b.ink; font: b.font; style: Text.Raised; styleColor: "#66000000"; horizontalAlignment: b.fieldStyle ? Text.AlignLeft : Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
- }
- component ConfirmationActions: RowLayout {
-  id: actions
-  signal accepted()
-  signal rejected()
-  property string cancelObjectName: ""
-  property string okObjectName: ""
-  Layout.fillWidth: true; spacing: 8
-  ActionButton { objectName: actions.cancelObjectName; Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.minimumWidth: 0; text: win.tr("Cancel","取消"); onClicked: actions.rejected() }
-  ActionButton { objectName: actions.okObjectName; Layout.fillWidth: true; Layout.preferredWidth: 1; Layout.minimumWidth: 0; text: win.tr("OK","确定"); fill: "#a7eb52"; ink: "#17210f"; onClicked: actions.accepted() }
- }
- component RefreshButton: ActionButton {
-  width: 38; text: "↻"; ink: "#a7eb52"; font.pixelSize: 22
- }
- component CloseButton: ActionButton {
-  id: closeButton
-  width: 26; implicitHeight: 30; padding: 0; leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
-  text: "×"; fill: "transparent"; hoverFill: "#a7eb52"; ink: hovered || down ? "#17210f" : "#d0d8dd"; showOutline: false; Accessible.name: win.tr("Close","关闭")
-  contentItem: Item {
-   Item { anchors.fill: parent; anchors.topMargin: 1; anchors.bottomMargin: -1
-    Rectangle { anchors.centerIn: parent; anchors.alignWhenCentered: false; width: 14; height: 2; rotation: 45; color: "#66000000"; antialiasing: true }
-    Rectangle { anchors.centerIn: parent; anchors.alignWhenCentered: false; width: 14; height: 2; rotation: -45; color: "#66000000"; antialiasing: true }
-   }
-   Rectangle { objectName: "closeStrokeA"; anchors.centerIn: parent; anchors.alignWhenCentered: false; width: 14; height: 1.5; rotation: 45; color: closeButton.ink; antialiasing: true }
-   Rectangle { objectName: "closeStrokeB"; anchors.centerIn: parent; anchors.alignWhenCentered: false; width: 14; height: 1.5; rotation: -45; color: closeButton.ink; antialiasing: true }
-  }
- }
- component DialogPopup: Popup {
-  popupType: Popup.Item; parent: Overlay.overlay; x: (win.width-width)/2; y: (win.height-height)/2
-  width: 280; height: 356; modal: true; focus: true; padding: 20
-  background: Rectangle { color: "#1a2024"; radius: 12; border.color: "#354047" }
-  Overlay.modal: Rectangle { color: "#99080a0c" }
- }
- component FieldSurface: Item {
-  property bool highlighted: false
-  SoftShadow { objectName: "fieldShadow"; anchors.fill: parent; cornerRadius: 7 }
-  Rectangle { anchors.fill: parent; color: "#11171b"; radius: 7; border.color: parent.highlighted ? "#a7eb52" : "#354047"; border.width: 1 }
- }
- component LanguageSelector: Slider {
-  id: languageSlider
-  width: 76; height: 26; padding: 2; from: 0; to: 1; stepSize: 1; snapMode: Slider.SnapAlways
-  hoverEnabled: true; value: win.zh ? 0 : 1
-  Accessible.name: win.tr("Language","语言")
-  onMoved: bridge.setLanguage(value>=0.5 ? "en" : "zh")
-  background: Item {
-   SoftShadow { anchors.fill: parent; cornerRadius: 6 }
-   Rectangle { id: languageTrack; anchors.fill: parent; radius: 6; color: languageSlider.hovered ? "#333b40" : "#272d30"; Behavior on color { ColorAnimation { duration: 100 } }
-    gradient: Gradient {
-     GradientStop { position: 0; color: Qt.darker(languageTrack.color,1.6) }
-     GradientStop { position: 0.42; color: languageTrack.color }
-     GradientStop { position: 1; color: Qt.lighter(languageTrack.color,1.08) }
-    }
-    Rectangle { x: 1; y: 1; width: parent.width-2; height: parent.height-2; radius: 5; color: "transparent"; border.width: 1; border.color: "#33000000" }
-   }
-  }
-  handle: Item {
-   z: 2
-   x: languageSlider.leftPadding+languageSlider.visualPosition*(languageSlider.availableWidth-width)
-   y: languageSlider.topPadding; width: 35; height: 22
-   Behavior on x { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-   SoftShadow { anchors.fill: parent; cornerRadius: 4 }
-   Rectangle { anchors.fill: parent; radius: 4; color: languageSlider.pressed ? "#fff07e" : languageSlider.hovered ? "#ffea61" : "#ffdf32" }
-  }
-  Row { anchors.fill: parent; z: 1
-   Repeater { model: ["EN","CN"]; delegate: RioText { required property string modelData; width: 38; height: 26; text: modelData; color: "#a7eb52"; font.pixelSize: 10; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } }
-  }
- }
- component RioSwitch: Switch {
-  id: sw
-  hoverEnabled: true
-  implicitWidth: 42; implicitHeight: 24
-  indicator: Rectangle {
-   id: switchTrack
-   width: 42; height: 24; radius: 12; color: !sw.enabled ? "#343a3e" : sw.pressed ? "#d1ff9b" : sw.hovered ? "#c4ff7b" : sw.checked ? "#a7eb52" : "#343a3e"; border.width: sw.enabled && (sw.hovered || sw.activeFocus) ? 1 : 0; border.color: "#d1ff9b"
-   gradient: Gradient {
-    GradientStop { position: 0; color: Qt.darker(switchTrack.color,1.2) }
-    GradientStop { position: 0.38; color: switchTrack.color }
-    GradientStop { position: 1; color: Qt.lighter(switchTrack.color,1.04) }
-   }
-   Behavior on color { ColorAnimation { duration: 130 } }
-   Rectangle { x: 1; y: 1; width: parent.width-2; height: parent.height-2; radius: 11; color: "transparent"; border.width: 1; border.color: "#24000000" }
-   Rectangle { width: 18; height: 18; y: 5; x: switchThumb.x; radius: 9; color: "#000000"; opacity: sw.enabled ? 0.22 : 0.1 }
-   Rectangle { id: switchThumb; width: 18; height: 18; y: 3; x: sw.checked ? 21 : 3; radius: 9; color: !sw.enabled ? "#7b8489" : sw.checked || sw.hovered || sw.pressed ? "#18200e" : "#a4acb0"; Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } } }
-  }
- }
- // A soft shadow inside the same transparent native window. No system frame or second window.
- Repeater {
-  model: 12
-  Rectangle { x: 14-index; y: 16-index; width: 420+index*2; height: 645+index*2; radius: 12+index; color: "black"; opacity: (12-index)*0.0024 }
- }
- Rectangle {
-  id: panel; x: 14; y: 12; width: 420; height: 647; radius: 12; color: "#111416"
-  Item {
-   x: 0; y: 0; width: parent.width; height: 66
-   DragHandler { target: null; onActiveChanged: if(active) win.startSystemMove() }
-   Image { x: 20; y: 22; width: 76; height: 25; source: "../rio-brand.png"; fillMode: Image.PreserveAspectFit; sourceClipRect: Qt.rect(8,88,240,80) }
-   RioText { x: 109; y: 24; text: win.tr("Settings","设置"); color: "#e9edef"; font.pixelSize: 17 }
-   LanguageSelector { objectName: "languageSelector"; x: 292; y: 23 }
-   CloseButton { objectName: "settingsCloseButton"; x: 377; y: 20; onClicked: bridge.hideWindow() }
-  }
-  Rectangle { x: 20; y: 65; width: 380; height: 1; color: "#292f32" }
+ component RioText: Rio.RioText { font.family: win.zh ? "Microsoft YaHei UI" : "Segoe UI" }
+ component EnglishText: Rio.EnglishText { }
+ component SoftShadow: Rio.SoftShadow {  }
+ component ActionButton: Rio.ActionButton {  }
+ component ConfirmationActions: Rio.ConfirmationActions { }
+ component RefreshButton: Rio.RefreshButton { }
+ component CloseButton: Rio.CloseButton {  }
+ component DialogPopup: Rio.DialogPopup { }
+ component FieldSurface: Rio.FieldSurface { }
+ component LanguageSelector: Rio.LanguageSelector {  }
+ component RioSwitch: Rio.RioSwitch {  }
+  Item { y: 0; width: 420; height: 702
   Item { id: previewClip; objectName: "previewClip"; x: 20; y: 88; width: 170; height: 170; clip: true
    Image { id: screen; anchors.fill: parent; source: "image://monitor/frame?"+bridge.frameId; cache: false; smooth: true; rotation: bridge.rotation; fillMode: Image.PreserveAspectFit }
   }
@@ -160,20 +45,23 @@ ApplicationWindow {
   RioSwitch { objectName: "monitorSwitch"; x: 358; y: 439; checked: bridge.monitorChecked; enabled: !bridge.monitorBusy && !bridge.monitorExternal; onToggled: bridge.setMonitorEnabled(checked) }
   RioText { x: 24; y: 490; text: win.tr("Music appreciation","音乐欣赏模式"); color: "#dce3e6" }
   RioSwitch { objectName: "musicSwitch"; x: 358; y: 484; checked: bridge.musicEnabled; onToggled: bridge.setMusicEnabled(checked) }
-  RioText { x: 24; y: 535; text: win.tr("Start at login","登录后启动"); color: "#dce3e6" }
-  RioSwitch { id: autoSwitch; objectName: "autoSwitch"; x: 358; y: 529; checked: bridge.autostart; onToggled: bridge.setAutostart(checked) }
-  Rectangle { x: 20; y: 575; width: 380; height: 1; color: "#292f32" }
+  RioText { x: 24; y: 535; text: win.tr("Extensions","扩展"); color: "#dce3e6" }
+  RioText { x: 24; y: 554; width: 270; text: win.tr("Fangcun · Fengshen Pro","方寸山 · 风神 Pro"); color: "#89979f"; font.pixelSize: 10; elide: Text.ElideRight }
+  ActionButton { objectName: "extensionsButton"; x: 310; y: 527; width: 90; height: 34; text: win.tr("Open","打开"); onClicked: extensionsPopup.open() }
+  RioText { x: 24; y: 590; text: win.tr("Start at login","登录后启动"); color: "#dce3e6" }
+  RioSwitch { id: autoSwitch; objectName: "autoSwitch"; x: 358; y: 584; checked: bridge.autostart; onToggled: bridge.setAutostart(checked) }
+  Rectangle { x: 20; y: 630; width: 380; height: 1; color: "#292f32" }
   Rectangle {
-   objectName: "updateConnectionLamp"; x: 24; y: 607; width: 8; height: 8; radius: 4; antialiasing: true
+   objectName: "updateConnectionLamp"; x: 24; y: 662; width: 8; height: 8; radius: 4; antialiasing: true
    color: bridge.updateConnection==="connected" ? "#a7eb52" : bridge.updateConnection==="failed" ? "#eb7070" : "#68767d"
    HoverHandler { id: connectionHover }
    ToolTip.visible: connectionHover.hovered
    ToolTip.text: bridge.updateConnection==="connected" ? win.tr("GitHub connected","GitHub 已连接") : bridge.updateConnection==="failed" ? win.tr("GitHub connection failed","GitHub 连接失败") : win.tr("GitHub not checked","尚未检测 GitHub")
   }
-  EnglishText { id: currentVersion; objectName: "currentVersion"; x: 44; y: 605; text: bridge.version; color: "#829096"; font.pixelSize: 10 }
+  EnglishText { id: currentVersion; objectName: "currentVersion"; x: 44; y: 660; text: bridge.version; color: "#829096"; font.pixelSize: 10 }
   ActionButton {
    id: updateLink; objectName: "checkUpdatesButton"
-   x: currentVersion.x+currentVersion.implicitWidth+6; y: 594; width: 72; height: 34; text: "Check updates"
+   x: currentVersion.x+currentVersion.implicitWidth+6; y: 649; width: 72; height: 34; text: "Check updates"
    leftPadding: 0; rightPadding: 0; showOutline: false; fill: "transparent"
    enabled: bridge.updateState!=="checking" && bridge.updateState!=="downloading" && bridge.updateState!=="ready"
    opacity: 1; ink: !enabled ? "#829074" : hovered || down || activeFocus ? "#d1ff9b" : "#a7eb52"
@@ -183,7 +71,7 @@ ApplicationWindow {
    onClicked: bridge.checkUpdates()
   }
   Item {
-   id: footerProgressArea; objectName: "footerProgressArea"; x: 177; y: 594; width: 117; height: 34
+   id: footerProgressArea; objectName: "footerProgressArea"; x: 177; y: 649; width: 117; height: 34
    visible: bridge.footerStatus!==""
    property bool indeterminate: bridge.footerProgress<0
    property real motion: 0
@@ -213,7 +101,58 @@ ApplicationWindow {
     running: footerTrack.visible && footerProgressArea.indeterminate && win.visible
    }
   }
-  ActionButton { objectName: "saveButton"; x: 310; y: 594; width: 90; height: 34; text: win.tr("Save","保存"); fill: "#a7eb52"; ink: "#17210f"; onClicked: bridge.saveAndHide() }
+  ActionButton { objectName: "saveButton"; x: 310; y: 649; width: 90; height: 34; text: win.tr("Save","保存"); fill: "#a7eb52"; ink: "#17210f"; onClicked: bridge.saveAndHide() }
+  }
+
+ // Status line shared by every extension card: download state first, then the module's own mode.
+ function extensionDetail(ext,on,off){
+  if(ext.state==="missing") return tr("Not downloaded · ","未下载 · 开启后下载 · ")+ext.downloadSize
+  if(ext.state==="downloading") return tr("Downloading ","正在下载 ")+Math.round(ext.progress*100)+"%"
+  if(ext.state==="error") return tr("Download failed · Switch on to retry","下载失败 · 重新开启可重试")
+  return ext.enabled ? on : off
+ }
+ // One card per extension: name, status line, optional mode switch, actions.
+ component ExtensionCard: Item {
+  default property alias actions: actionRow.data
+  property alias accessory: accessorySlot.data
+  property alias actionWidth: actionRow.width
+  property string heading: ""
+  property string detail: ""
+  property real progress: -1
+  property bool failed: false
+  Layout.fillWidth: true; implicitHeight: 108
+  FieldSurface { anchors.fill: parent }
+  Column { x: 14; y: 12; width: parent.width-84; spacing: 3
+   RioText { text: heading; color: "#edf0f2"; font.pixelSize: 15 }
+   RioText { width: parent.width; text: detail; color: failed ? "#eb7070" : "#89979f"; font.pixelSize: 10; elide: Text.ElideRight }
+  }
+  Rectangle { objectName: "downloadTrack"; visible: progress>=0; x: 14; y: 53; width: parent.width-28; height: 4; radius: 2; color: "#303a3b"
+   Rectangle { width: parent.width*Math.max(0,Math.min(1,progress)); height: 4; radius: 2; color: "#a7eb52" }
+  }
+  Item { id: accessorySlot; x: parent.width-56; y: 14; width: 42; height: 24 }
+  Row { id: actionRow; x: 14; y: parent.height-48; width: parent.width-28; height: 34; spacing: 8 }
+ }
+ DialogPopup {
+  id: extensionsPopup; objectName: "extensionsPopup"; height: 310
+  ColumnLayout { anchors.fill: parent; spacing: 12
+   RowLayout { Layout.fillWidth: true; RioText { text: win.tr("Extensions","扩展"); color: "#edf0f2"; font.pixelSize: 17; Layout.fillWidth: true } CloseButton { objectName: "extensionsCloseButton"; Layout.preferredWidth: 26; onClicked: extensionsPopup.close() } }
+   ExtensionCard {
+    id: fangcunCard
+    objectName: "fangcunExtension"; heading: win.tr("Fangcun","方寸山")
+    detail: win.extensionDetail(fangcunExt,win.tr("Cultivation mode on","修仙模式已开启"),win.tr("Cultivation mode off","修仙模式未开启"))
+    progress: fangcunExt.state==="downloading" ? fangcunExt.progress : -1; failed: fangcunExt.state==="error"
+    accessory: RioSwitch { objectName: "cultivationSwitch"; checked: fangcunExt.enabled; enabled: !bridge.storageBusy; onToggled: { fangcunExt.setEnabled(checked); checked=Qt.binding(function(){return fangcunExt.enabled}) } }
+    ActionButton { objectName: "fangcunOpenButton"; width: fangcunCard.actionWidth; height: 34; text: win.tr("Open settings","打开设置"); enabled: fangcunExt.enabled && fangcunExt.state==="ready"; onClicked: { extensionsPopup.close(); fangcunExt.open() } }
+   }
+   ExtensionCard {
+    id: blacksharkCard
+    objectName: "blacksharkExtension"; heading: win.tr("Fengshen Pro","风神 Pro")
+    detail: win.extensionDetail(blacksharkExt,win.tr("Cooler control on","散热器控制已开启"),win.tr("Cooler control off","散热器控制未开启"))
+    progress: blacksharkExt.state==="downloading" ? blacksharkExt.progress : -1; failed: blacksharkExt.state==="error"
+    accessory: RioSwitch { objectName: "blacksharkSwitch"; checked: blacksharkExt.enabled; onToggled: { blacksharkExt.setEnabled(checked); checked=Qt.binding(function(){return blacksharkExt.enabled}) } }
+    ActionButton { objectName: "blacksharkOpenButton"; width: blacksharkCard.actionWidth; height: 34; text: win.tr("Open settings","打开设置"); enabled: blacksharkExt.enabled && blacksharkExt.state==="ready"; onClicked: { extensionsPopup.close(); blacksharkExt.open() } }
+   }
+  }
  }
  DialogPopup {
   id: musicPopup; objectName: "musicPopup"; height: 410

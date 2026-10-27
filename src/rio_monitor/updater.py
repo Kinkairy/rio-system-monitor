@@ -29,7 +29,7 @@ def latest_asset(current=__version__):
 def download_asset(asset,directory,stop=None,progress=None):
     directory=Path(directory);directory.mkdir(parents=True,exist_ok=True)
     expected=asset['digest'].split(':',1)[1].lower()
-    destination=directory/(asset['version']+'.exe');partial=destination.with_suffix('.part')
+    destination=directory/asset.get('file',asset['version']+'.exe');partial=destination.with_suffix('.part')
     if destination.is_file() and file_hash(destination)==expected:
         if progress:progress(asset['size'],asset['size'])
         return destination

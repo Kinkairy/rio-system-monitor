@@ -18,6 +18,12 @@ assets/*
 !assets/ui/
 assets/ui/*
 !assets/ui/*.qml
+!assets/ui/Rio/
+assets/ui/Rio/*
+!assets/ui/Rio/UI/
+assets/ui/Rio/UI/*
+!assets/ui/Rio/UI/*.qml
+!assets/ui/Rio/UI/qmldir
 *.png
 *.jpg
 *.jpeg

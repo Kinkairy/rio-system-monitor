@@ -24,3 +24,19 @@ class SettingTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as d,patch.dict(os.environ,{'LOCALAPPDATA':d}):
    save(Settings(rotation=39,display_mode='stored'))
    self.assertEqual(load().display_mode,'monitor');self.assertEqual(load().rotation,39)
+
+ def test_cultivation_switch_and_desktop_position_roundtrip(self):
+  with tempfile.TemporaryDirectory() as d,patch.dict(os.environ,{'LOCALAPPDATA':d}):
+   self.assertFalse(load().game_enabled)
+   save(Settings(game_enabled=True,gourd_x=-420,gourd_y=720))
+   s=load();self.assertTrue(s.game_enabled);self.assertEqual((s.gourd_x,s.gourd_y),(-420,720))
+ def test_blackshark_switch_keeps_previous_resume_behaviour(self):
+  with tempfile.TemporaryDirectory() as d,patch.dict(os.environ,{'LOCALAPPDATA':d}):
+   self.assertFalse(load().blackshark_enabled)
+   config_path().parent.mkdir(parents=True);config_path().write_text('{"rotation":39}')
+   self.assertFalse(load().blackshark_enabled)
+   # Earlier releases resumed whenever a saved cooler configuration existed.
+   config_path().with_name('blackshark.json').write_text('{}')
+   self.assertTrue(load().blackshark_enabled);self.assertEqual(load().rotation,39)
+   save(Settings(blackshark_enabled=False));self.assertFalse(load().blackshark_enabled)
+   config_path().write_text('{"blackshark_enabled":"yes"}');self.assertEqual(load(),Settings(blackshark_enabled=True))

@@ -196,11 +196,12 @@ class MusicUI(unittest.TestCase):
    from PySide6.QtCore import QUrl,QObject
    from rio_monitor.qt_app import Bridge,Frames
    from rio_monitor.settings import Settings
+   from rio_monitor.ui import install_ui
    from unittest.mock import Mock
   except ImportError:self.skipTest('Qt not installed')
   app=QApplication.instance() or QApplication([]);weather=Mock();weather.location=None
   bridge=Bridge(app,Settings(),weather,Frames(),capture=True)
-  engine=QQmlApplicationEngine();engine.rootContext().setContextProperty('bridge',bridge);engine.addImageProvider('monitor',bridge.frames)
+  engine=QQmlApplicationEngine();install_ui(engine,Path(__file__).resolve().parents[1]/'assets');engine.rootContext().setContextProperty('bridge',bridge);engine.addImageProvider('monitor',bridge.frames)
   engine.load(QUrl.fromLocalFile(str(Path(__file__).resolve().parents[1]/'assets/ui/Main.qml')))
   self.assertTrue(engine.rootObjects());window=engine.rootObjects()[0];bridge.win=window
   self.assertIsNotNone(window.findChild(QObject,'musicPopup'));self.assertIsNotNone(window.findChild(QObject,'musicSwitch'))

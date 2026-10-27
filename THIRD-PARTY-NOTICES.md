@@ -49,3 +49,5 @@ The optional same-version NumPy 2.5.4 slim build omits external BLAS/LAPACK.
 Original NumPy component licenses are in
 docs/third-party/numpy/ and bundled under licenses/numpy/. See its README for
 the unmodified source, build inputs and recipe.
+
+BlackShark Bluetooth support uses Bleak (MIT), through the existing Windows Bluetooth stack. Its license and source information are in docs/third-party/bleak/. No official BlackShark EXE or DLL is bundled.

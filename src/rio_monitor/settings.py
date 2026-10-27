@@ -14,10 +14,14 @@ class Settings:
     language: str = 'en'
     temperature_monitor: bool = True
     display_mode: str = 'monitor'
+    game_enabled: bool = False
+    gourd_x: int = -1
+    gourd_y: int = -1
     music_enabled: bool = False
     music_online_lyrics: bool = True
     music_source: str = ''
     music_lyrics_consent: int = 2
+    blackshark_enabled: bool = False
 
 def config_path():
     return Path(os.environ.get('LOCALAPPDATA',Path.home()/'.config'))/'RIO-Monitor'/'settings.json'
@@ -28,14 +32,18 @@ def load():
         s=Settings(**{k:v for k,v in raw.items() if k in Settings.__dataclass_fields__})
         if s.fps not in (15,20,30) or (not isinstance(s.rotation,int) or not 0<=s.rotation<=359) or s.weather_mode not in ('off','auto','manual'):raise ValueError('Invalid settings')
         if s.language not in ('en','zh') or not isinstance(s.city,str) or not isinstance(s.start_hidden,bool) or not isinstance(s.autostart,bool) or not isinstance(s.temperature_monitor,bool):raise ValueError('Invalid settings')
+        if not isinstance(s.game_enabled,bool) or type(s.gourd_x) is not int or type(s.gourd_y) is not int:raise ValueError('Invalid game setting')
         if s.display_mode not in ('monitor','stored'):raise ValueError('Invalid display mode')
         if not isinstance(s.music_enabled,bool) or not isinstance(s.music_online_lyrics,bool) or not isinstance(s.music_source,str):raise ValueError('Invalid music settings')
+        if not isinstance(s.blackshark_enabled,bool):raise ValueError('Invalid BlackShark setting')
         if 'music_online_lyrics' in raw and 'music_lyrics_consent' not in raw:s.music_lyrics_consent=0
         if s.music_lyrics_consent != 2:s.music_online_lyrics=False  # Preserve older provider opt-outs.
         s.start_hidden=True
         s.display_mode='monitor'  # Each program launch reconnects the live display.
-        return s
-    except (OSError,ValueError,TypeError):return Settings()
+    except (OSError,ValueError,TypeError):raw={};s=Settings()
+    # Older releases resumed BlackShark whenever its saved configuration existed.
+    if 'blackshark_enabled' not in raw:s.blackshark_enabled=config_path().with_name('blackshark.json').is_file()
+    return s
 
 def save(s):
     p=config_path();p.parent.mkdir(parents=True,exist_ok=True)

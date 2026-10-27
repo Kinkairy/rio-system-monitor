@@ -1,0 +1,15 @@
+module Rio.UI
+RioText 1.0 RioText.qml
+SoftShadow 1.0 SoftShadow.qml
+ActionButton 1.0 ActionButton.qml
+CloseButton 1.0 CloseButton.qml
+LanguageSelector 1.0 LanguageSelector.qml
+RioSwitch 1.0 RioSwitch.qml
+PanelWindow 1.0 PanelWindow.qml
+EnglishText 1.0 EnglishText.qml
+ConfirmationActions 1.0 ConfirmationActions.qml
+RefreshButton 1.0 RefreshButton.qml
+DialogPopup 1.0 DialogPopup.qml
+FieldSurface 1.0 FieldSurface.qml
+RioSlider 1.0 RioSlider.qml
+RioComboBox 1.0 RioComboBox.qml

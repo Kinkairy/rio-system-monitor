@@ -1,4 +1,4 @@
-"""Qt Quick single-window shell. Existing telemetry/render/output are kept separate."""
+"""Qt Quick Settings shell with a lazy independent Fangcun panel. Existing telemetry/render/output are kept separate."""
 import sys,time,json,threading,queue,argparse,statistics
 from collections import deque
 from pathlib import Path
@@ -22,6 +22,9 @@ from .music.controller import Music
 from .music.renderer import MusicRenderer
 from .music.state import AutomaticMusicView
 from .view_transition import ViewTransition
+from .fangcun_host import FangcunHost
+from .extensions import Extension,ModuleStore,read_manifest
+from .ui import install_ui
 
 @lru_cache(maxsize=2)
 def preview_mask(size):
@@ -45,7 +48,8 @@ class Bridge(QObject):
   self.storage=storage or StorageJob(DisplaySession(settings.display_mode),Path());self.storage_snapshot=None
   self.music=music or Music(Path(),start=False);self.music_signature=None
   self.updater=updater;self.update_snapshot=updater.snapshot() if updater else dict(state='idle',connection='unknown',progress=0);self.update_exit_started=False
-  self._reset_requested=False
+  self.blackshark_module=None;self.blackshark_samples=lambda:{};self.ui_engine=None
+  self._reset_requested=False;self.game=None;self.fangcun=None;self.extensions={}
   if settings.weather_mode=='manual':
    try:self._city=json.loads(settings.city)['label'].split(',')[0]
    except (ValueError,KeyError):pass
@@ -145,6 +149,7 @@ class Bridge(QObject):
  @Slot()
  def writeStorage(self):
   if self.capture:return
+  if self.game:self.game.setEnabled(False)
   self.storage.write();self.changed.emit()
  @Slot()
  def resumeMonitor(self):
@@ -159,6 +164,7 @@ class Bridge(QObject):
   if not self._reset_requested:return
   self._reset_requested=False;self.defaultConfirmationChanged.emit()
   if accepted and not self.capture:
+   if self.game:self.game.setEnabled(False)
    self.storage.prepare(self.storage.assets/'default-screen.gif',write_after=True);self.changed.emit()
  def getMonitorStatus(self):
   labels={'detecting':('Checking existing sensors…','正在检测现有传感器…'),'missing':('Enable to install · Administrator approval once','首次开启时安装 · 需管理员确认'),'installing':('Installing temperature component…','正在安装温度监控组件…'),'existing':('Using existing sensor interface','使用现有传感器接口'),'ready':('Installed · Running','已安装 · 运行正常'),'starting':('Starting temperature monitoring…','正在启用温度监控…'),'off':('Monitoring off','温度监控已关闭'),'unsupported':('Installed · CPU sensor unavailable','已安装 · 暂无可用 CPU 温度'),'error':('Component unavailable · Re-enable to repair','组件异常 · 重新开启可修复'),'cancelled':('Installation cancelled','已取消安装'),'reboot':('Installed · Windows restart required','已安装 · 需重启 Windows')}
@@ -209,9 +215,40 @@ class Bridge(QObject):
   if self.tray and self.tray.isVisible():self.win.hide()
   elif self.capture:self.win.hide()
   else:self.tell('System tray unavailable. / 系统托盘不可用。')
- def show(self):self.win.show();self.win.raise_();self.win.requestActivate()
+ def show(self):self.win.setProperty('gameTab',False);self.win.show();self.win.raise_();self.win.requestActivate()
+ def _blackshark(self):
+  if self.blackshark_module is None:
+   from rio_blackshark import BlackSharkModule
+   from .blackshark_host import BlackSharkHost
+   ext=self.extensions.get('blackshark')
+   self.blackshark_module=BlackSharkModule(BlackSharkHost(self,self.ui_engine),ext.assets if ext else self.storage.assets,config_path().with_name('blackshark.json'),capture=self.capture)
+  return self.blackshark_module
+ @Slot(int)
+ def showBlackSharkPage(self,page):
+  try:self._blackshark().show(page)
+  except Exception as ex:self.tell('BlackShark / 黑鲨: '+str(ex))
+ blacksharkEnabled=Property(bool,lambda self:self.s.blackshark_enabled,notify=changed)
+ @Slot(bool)
+ def setBlackSharkEnabled(self,value):
+  if value==self.s.blackshark_enabled:return
+  if not value and self.blackshark_module:
+   # Never interrupt an uncertain device write; a closed module is replaced on the next enable.
+   if self.blackshark_module.runtime.snapshot()['busy'] or not self.blackshark_module.close():
+    self.changed.emit();self.tell('BlackShark is applying settings. Please wait. / 黑鲨正在应用设置，请稍候。');return
+   self.blackshark_module=None
+  self.applySettings(blackshark_enabled=value)
+  if value:self.resumeBlackShark()
+ @Slot()
+ def openBlackShark(self):self.showBlackSharkPage(0)
+ def resumeBlackShark(self):
+  ext=self.extensions.get('blackshark')
+  if self.capture or not self.s.blackshark_enabled or (ext and ext.assets is None):return
+  try:self._blackshark().start()
+  except Exception as ex:self.tell('BlackShark / 黑鲨: '+str(ex))
  def exit(self):
   if self.quitting:return
+  if self.blackshark_module and self.blackshark_module.runtime.snapshot()['busy']:
+   self.blackshark_module.show();self.tell('BlackShark is applying settings. Please wait. / 黑鲨正在应用设置，请稍候。');return
   if self.storage.snapshot()['writing']:
    self.show();self.tell('Writing screen content. Please wait. / 正在写入屏幕内容，请稍候。');return
   if self.monitor.snapshot()['busy']:
@@ -220,6 +257,7 @@ class Bridge(QObject):
   self.quitting=True
   if self.shutdown and not self.shutdown():self.quitting=False;QTimer.singleShot(500,self.exit);return
   if self.tray:self.tray.hide()
+  if self.game and self.game.gourd:self.game.gourd.hide()
   self.app.quit()
  def toggleAuto(self):
   self.setAutostart(not self.s.autostart)
@@ -236,6 +274,7 @@ class Bridge(QObject):
    action=menu.addAction(text);action.triggered.connect(fn)
    if fn==self.toggleAuto:action.setCheckable(True);action.setChecked(self.s.autostart)
    if fn==self.toggleMusic:action.setCheckable(True);action.setChecked(self.s.music_enabled)
+  # Modules open only from the Settings extension entry.
   # One explicit right-click path avoids depending on the platform's popup handling.
   old=getattr(self,'menu',None);self.menu=menu;self.tray.setContextMenu(None)
   if old:old.deleteLater()
@@ -298,14 +337,19 @@ class Bridge(QObject):
    self.changed.emit()
 
 def main():
- parser=argparse.ArgumentParser();parser.add_argument('--version',action='version',version='RIO System Monitor '+__version__);parser.add_argument('--ui-capture',type=Path);parser.add_argument('--snapshot',type=Path);parser.add_argument('--demo',action='store_true');parser.add_argument('--self-test',action='store_true');parser.add_argument('--show-settings',action='store_true');parser.add_argument('--show-content',action='store_true');parser.add_argument('--performance-report',type=Path);args=parser.parse_args()
+ parser=argparse.ArgumentParser();parser.add_argument('--version',action='version',version='RIO System Monitor '+__version__);parser.add_argument('--ui-capture',type=Path);parser.add_argument('--fangcun-capture',type=Path);parser.add_argument('--snapshot',type=Path);parser.add_argument('--demo',action='store_true');parser.add_argument('--self-test',action='store_true');parser.add_argument('--show-settings',action='store_true');parser.add_argument('--show-content',action='store_true');parser.add_argument('--performance-report',type=Path);parser.add_argument('--blackshark-page',choices=('screen','fan','lighting'));args=parser.parse_args()
+ if args.ui_capture and args.blackshark_page:
+  from rio_blackshark.capture import capture_ui
+  assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets'
+  return capture_ui(args.ui_capture,assets,('screen','fan','lighting').index(args.blackshark_page))
  if args.snapshot:
   from .model import Sample
   renderer=Renderer();collector=Collector();now=time.monotonic()
   samples=({k:Sample(v,now,'demo') for k,v in {'cpu':32,'gpu':68,'temperature':58,'ram_used':12.4,'ram_total':32,'download':24.8,'upload':1.2}.items()} if args.demo else collector.collect())
   for i in range(120):frame=renderer.render(samples,now=now+i/60)
   frame.save(args.snapshot);collector.gpu.close();return
- instance=acquire_instance()
+ capture_mode=bool(args.ui_capture or args.fangcun_capture)
+ instance=True if capture_mode else acquire_instance()
  if instance is None:return 0
  if sys.platform=='win32':
   import ctypes
@@ -315,21 +359,43 @@ def main():
  app=QApplication(sys.argv);app.setQuitOnLastWindowClosed(False);app.setApplicationName('RIO System Monitor');app.setApplicationVersion(__version__);app.setFont(QFont('Segoe UI',10))
  assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets';app.setWindowIcon(QIcon(str(assets/'rio-icon.ico')))
  from .updater import AutoUpdater
- updater=AutoUpdater(config_path().parent/'updates') if getattr(sys,'frozen',False) and not args.ui_capture and not args.self_test else None
- settings=Settings(weather_mode='off') if args.ui_capture else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not args.ui_capture);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets,cache_dir=None if args.ui_capture else config_path().parent/'screen-content');music=Music(config_path().parent/'lyrics',settings.music_enabled,settings.music_online_lyrics,settings.music_source,start=not args.ui_capture);bridge=Bridge(app,settings,weather,provider,bool(args.ui_capture),monitor=monitor,storage=storage,music=music,updater=updater);engine=QQmlApplicationEngine();engine.addImageProvider('monitor',provider);engine.rootContext().setContextProperty('bridge',bridge);engine.load(QUrl.fromLocalFile(str(assets/'ui/Main.qml')))
+ updater=AutoUpdater(config_path().parent/'updates') if getattr(sys,'frozen',False) and not capture_mode and not args.self_test else None
+ settings=Settings(weather_mode='off',language='zh',game_enabled=False) if capture_mode else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not capture_mode);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets,cache_dir=None if capture_mode else config_path().parent/'screen-content');music=Music(config_path().parent/'lyrics',settings.music_enabled,settings.music_online_lyrics,settings.music_source,start=not capture_mode);bridge=Bridge(app,settings,weather,provider,capture_mode,monitor=monitor,storage=storage,music=music,updater=updater)
+ engine=QQmlApplicationEngine();install_ui(engine,assets);bridge.ui_engine=engine;game_provider=Frames()
+ save_path=(args.fangcun_capture or args.ui_capture or config_path().parent)/'fangcun-save.json'
+ def load_fangcun(module_assets):
+  from rio_fangcun import FangcunModule
+  game=FangcunModule(FangcunHost(bridge,engine),module_assets,save_path);bridge.fangcun=game;bridge.game=game.controller
+  if bridge.win is not None:game.attach_desktop()
+ # Packaged builds download modules on demand; source runs import them from src/. Capture modes never download.
+ manifest=read_manifest(assets);modules=config_path().parent/'modules'
+ bridge.extensions=dict(
+  fangcun=Extension(ModuleStore('fangcun',modules,manifest,assets),is_on=lambda:bridge.s.game_enabled,load=load_fangcun,set_on=lambda value:bridge.game.setEnabled(value),open_window=lambda:bridge.game.openPanel(),allow_download=not capture_mode),
+  blackshark=Extension(ModuleStore('blackshark',modules,manifest,assets),is_on=lambda:bridge.s.blackshark_enabled,load=lambda module_assets:bridge.resumeBlackShark(),set_on=bridge.setBlackSharkEnabled,open_window=bridge.openBlackShark,allow_download=not capture_mode))
+ if args.fangcun_capture:
+  from .fangcun_capture import CaptureOutput
+  session._enumerator=lambda:['offline-capture'];session._output_factory=CaptureOutput
+ engine.addImageProvider('monitor',provider);engine.addImageProvider('fangcun',game_provider);engine.rootContext().setContextProperty('bridge',bridge)
+ for name,ext in bridge.extensions.items():bridge.changed.connect(ext.changed);engine.rootContext().setContextProperty(name+'Ext',ext)
+ engine.load(QUrl.fromLocalFile(str(assets/'ui/Main.qml')))
  if not engine.rootObjects():raise RuntimeError('Qt Quick main window failed to load')
- bridge.win=engine.rootObjects()[0];bridge.win.setIcon(app.windowIcon());bridge.tray=QSystemTrayIcon(app.windowIcon(),app);bridge.tray.setToolTip('RIO System Monitor');bridge.updateMenu();bridge.tray.activated.connect(bridge.trayActivated)
- if settings.autostart and getattr(sys,'frozen',False) and not args.ui_capture and not args.self_test:bridge.setAutostart(True)
- if not args.ui_capture:bridge.tray.show()
- if not args.ui_capture and not (args.show_settings or args.show_content):QTimer.singleShot(0,bridge.hideWindow)
+ bridge.win=engine.rootObjects()[0]
+ for ext in bridge.extensions.values():ext.start()
+ bridge.win.setIcon(app.windowIcon());bridge.tray=QSystemTrayIcon(app.windowIcon(),app);bridge.tray.setToolTip('RIO System Monitor');bridge.updateMenu();bridge.tray.activated.connect(bridge.trayActivated)
+ if settings.autostart and getattr(sys,'frozen',False) and not capture_mode and not args.self_test:bridge.setAutostart(True)
+ if not capture_mode:bridge.tray.show()
+ if not capture_mode and not (args.show_settings or args.show_content):QTimer.singleShot(0,bridge.hideWindow)
  if args.show_content:
   def show_content():
    storage.prepare(assets/'default-screen.gif');bridge.win.findChild(QObject,'storagePopup').setProperty('visible',True)
   QTimer.singleShot(150,show_content)
  frames=queue.Queue(maxsize=1);stop=threading.Event();reported_error=[None];render_times=deque(maxlen=300);render_count=[0];run_started=time.monotonic();latest_samples=[{}];sensor_errors=queue.Queue();active_view=['monitor']
+ bridge.blackshark_samples=lambda:latest_samples[0]
+ if args.blackshark_page:QTimer.singleShot(0,lambda:bridge.showBlackSharkPage(('screen','fan','lighting').index(args.blackshark_page)))
  def collect_loop():
   collector=None
   try:
+   if capture_mode:return
    collector=Collector(temperature=monitor)
    while not stop.is_set():
     started=time.monotonic();latest_samples[0]=collector.collect();stop.wait(max(0,1-(time.monotonic()-started)))
@@ -342,10 +408,12 @@ def main():
   while not stop.is_set():
    started=time.monotonic()
    if bridge.visible or session.needs_frame:
-    music_state=music.snapshot()
-    show_music=music_view.select(music_state,started);active_view[0]='music' if show_music else 'monitor'
-    frame=music_renderer.render(music_state,language=bridge.s.language) if show_music else renderer.render(latest_samples[0],weather=weather.reading)
-    frame=transition.render(active_view[0],frame,started)
+    music_state=music.snapshot();game=bridge.fangcun
+    game_frame=game.latest()[0] if game else None
+    show_game=bridge.s.game_enabled and game is not None
+    show_music=not show_game and music_view.select(music_state,started);active_view[0]='fangcun' if show_game else 'music' if show_music else 'monitor'
+    frame=(game_frame if game_frame is not None else Image.new('RGB',(480,480),'#101a18')) if show_game else music_renderer.render(music_state,language=bridge.s.language) if show_music else renderer.render(latest_samples[0],weather=weather.reading)
+    if not show_game:frame=transition.render(active_view[0],frame,started)
     render_times.append(time.monotonic()-started);render_count[0]+=1
     session.submit(frame.rotate(-bridge.s.rotation) if bridge.s.rotation else frame)
     if bridge.visible:
@@ -356,6 +424,12 @@ def main():
  worker=threading.Thread(target=render_loop,daemon=True);worker.start()
  def tick():
   bridge.consume()
+  for ext in bridge.extensions.values():ext.poll()
+  game=bridge.fangcun
+  if game:
+   game.poll();game_frame,game_id=game.latest();game_bridge=game.controller
+   if game_bridge.panel_visible and game_frame is not None and game_id!=game_bridge._frame:
+    game_provider.image=QImage(preview_bytes(game_frame),480,480,480*4,QImage.Format_RGBA8888).copy();game_bridge._frame=game_id;game_bridge.frameChanged.emit()
   if not sensor_errors.empty():bridge.tell('Sensors: '+sensor_errors.get())
   usb=session.snapshot()
   if usb['mode']=='monitor' and usb['usb_error'] and usb['usb_error']!=reported_error[0]:
@@ -373,6 +447,9 @@ def main():
  report_timer=QTimer();report_timer.timeout.connect(performance_report)
  if args.performance_report:report_timer.start(1000)
  def shutdown():
+  if not all([ext.close() for ext in bridge.extensions.values()]):return False
+  if bridge.blackshark_module and not bridge.blackshark_module.close():return False
+  if bridge.fangcun and not bridge.fangcun.close():return False
   if not storage.close():return False
   stop.set();weather.close();monitor.close()
   if not music.close():return False
@@ -383,6 +460,9 @@ def main():
   update_timer=QTimer(app);update_timer.setInterval(6*60*60*1000);update_timer.timeout.connect(updater.check);update_timer.start()
   QTimer.singleShot(10000,updater.check);app.aboutToQuit.connect(updater.install_on_exit)
  if not args.ui_capture:QTimer.singleShot(500,session.start)
+ if args.fangcun_capture:
+  from .fangcun_capture import capture
+  capture(app,bridge,bridge.game,bridge.fangcun.service,session,provider,game_provider,args.fangcun_capture)
  if args.ui_capture:
   args.ui_capture.mkdir(parents=True,exist_ok=True)
   def capture_main():

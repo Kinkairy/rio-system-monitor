@@ -1,8 +1,10 @@
-import queue,threading
+import queue,threading,time
 from .protocol import FrameSender,ProtocolError,encode_rgb565
 from .winusb import WinUSB
 class ScreenOutput:
     """Latest-frame queue; never pile up or retry an uncertain USB operation."""
+    frame_interval=1/12
+    initialization_delay=1.0
     def __init__(self,path):
         self.path=path;self.frames=queue.Queue(maxsize=1);self.stop=threading.Event()
         self.finished=threading.Event()
@@ -19,13 +21,20 @@ class ScreenOutput:
     def run(self):
         transport=None
         try:
-            # Start with a full frame: LCD-info can stall even when the display can render.
+            # OEM CD03 IN query selects the live session; allow firmware to settle.
             transport=WinUSB(self.path);sender=FrameSender(transport)
+            sender.lcd_info()
+            if self.stop.wait(self.initialization_delay):return
+            next_send=0
             while not self.stop.is_set():
+                # Pace complete frames; choose the newest queued image after waiting.
+                if self.stop.wait(max(0,next_send-time.monotonic())):break
                 try:image=self.frames.get(timeout=.2)
                 except queue.Empty:continue
                 if image.size!=(480,480):raise ValueError('Expected a 480x480 frame')
-                sender.send(encode_rgb565(image));self.sent+=1
+                pixels=encode_rgb565(image)
+                next_send=time.monotonic()+self.frame_interval
+                sender.send(pixels);self.sent+=1
         except Exception as exc:
             self.error=str(exc);self.stop.set()
             if transport and isinstance(exc,(OSError,ProtocolError)):

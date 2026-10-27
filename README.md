@@ -4,10 +4,16 @@
 
 ## 当前版本与目录
 
-当前版本为 **rc0.1.12**，可从 [GitHub Release](https://github.com/Kinkairy/rio-system-monitor/releases/tag/rc0.1.12) 下载完整程序。保留 `rc0.1` 标签作为原有基准。本版继承减少托盘无用绘制、缩小温度环缓存和释放已拆分图集的 CPU/内存优化；结果与验证边界见[性能说明](docs/performance.md)。源码入口支持 `python launch.py --version`，托盘提示仅显示 RIO System Monitor。
+当前版本为 **rc0.1.15**，可从 [GitHub Release](https://github.com/Kinkairy/rio-system-monitor/releases/tag/rc0.1.15) 下载完整程序。保留 `rc0.1` 标签作为原有基准。本版继承减少托盘无用绘制、缩小温度环缓存和释放已拆分图集的 CPU/内存优化；结果与验证边界见[性能说明](docs/performance.md)。源码入口支持 `python launch.py --version`，托盘提示仅显示 RIO System Monitor。
 
 当前版本包含歌词修正：移除不稳定的 QQ 桌面搜索，兼容歌手显示别名；先查播放器自身接口，获取不到再并发查询其他 QQ/网易云/酷狗/LRCLIB 接口，先取得有效同步歌词的先显示。歌名区域缩为居中的 240px，超出后往返滚动，避免遮住侧边仪表。`rc0.1` 标签保留为原有基准。修正与验证记录见[音乐模式说明](docs/music-mode.md#fix-20261023-qq-lyrics-failed-online-lyric-lookup)。
 
+
+### rc0.1.15 更新
+
+- 设置窗口新增「扩展」，是打开扩展模块的唯一入口；托盘菜单只保留退出、设置和登录后启动。
+- 扩展模块：方寸山（圆屏修仙挂机）与风神 Pro（黑鲨散热器的屏幕、散热和灯效设置）。每个模块一个开关和「打开设置」，模块窗口独立；风神 Pro 窗口内可切换屏幕、散热、灯效页。
+- 模块不打进程序本体：第一次开启时从本版 Release 下载对应模块包，校验 SHA-256 后启用，下载中可关掉取消，失败可重试。详见「扩展模块按需下载」。
 
 ### rc0.1.12 更新
 
@@ -18,6 +24,7 @@
 | 位置 | 用途 |
 | --- | --- |
 | `launch.py`、`src/rio_monitor/` | 唯一桌面入口、采集、绘制、音乐与 USB 通信源码 |
+| `src/rio_fangcun/`、`src/rio_blackshark/` | 扩展模块源码，只在私有仓库维护；公开仓库不含，只在 Release 提供模块包 |
 | `assets/ui/` | 公开的 QML 界面源码 |
 | `sensors/` | 温度辅助服务源码与构建脚本 |
 | `tools/` | 私有素材导入、校验与公开源码检查 |
@@ -182,9 +189,17 @@ spec 会自动调用 `tools/prepare_fixed_layers.py`，复用现有绘制代码�
 
 字体、动态数字、天气与机器人动画、旋转唱片、歌曲封面、歌词和频谱沿用现有路径。源码开发仍可直接读取私有输入；收到 EXE 后提取出的运行资源也能通过同一脚本重建，保留 LGPL 库替换能力。成品图仍可被提取或截图，此处理不提供加密或授权验证。原图不删除、不改写，默认构建只重建自己的 `build/runtime-assets/`。实现及验证记录：私有根 README 的 `ROUND-SCREEN-FIXED-LAYERS-20261025`。
 
+### 扩展模块按需下载
+
+方寸山（`rio_fangcun`）和风神 Pro（`rio_blackshark`）不打进 EXE。spec 在生成 `build/runtime-assets/` 后调用 `tools/package_modules.py`：每个模块的代码、QML 和它自己的运行资源打成 `dist/RIO-Module-Fangcun.zip`、`dist/RIO-Module-BlackShark.zip`，并从 EXE 的运行资源中移出；包内固定排序与时间，同一输入得到同一 SHA-256。各包大小与 SHA-256 写入随 EXE 的 `assets/modules.json`。模块包只含合并后的运行资源，不含原图、分层输入或来源记录；与 EXE 一样，美术原文件留在私有仓库，公开源码树仍由 `tools/check_source_only.py` 限定。spec 仍分析模块代码以收集它们依赖的库，再从 EXE 中去掉模块代码本身。
+
+发布时把两个模块包与 `RIO-System-Monitor.exe` 一起作为同一版本 Release 的附件，并写入 `SHA256SUMS.txt`；附件名不随版本改变。程序在设置「扩展」中开启模块、而本机还没有对应包时，从 `https://github.com/Kinkairy/rio-system-monitor/releases/download/<当前版本>/<包名>` 下载，校验大小和 SHA-256 后解压到 `%LOCALAPPDATA%/RIO-Monitor/modules/<模块>/<哈希前缀>/` 再加载；新版本装好后清理旧版本目录。设置中已开启但包缺失（例如升级后首次启动）会自动下载。下载中关掉开关即取消，失败可重新开启重试，只有就绪后才能打开模块窗口。源码运行时模块直接从 `src/` 导入，不走下载；截图和采集模式不联网。显式命令 `RIO --blackshark` 使用已下载的风神 Pro 包，需先在设置中开启一次。
+
+实现及验证记录：私有根 README 的 `ROUND-SCREEN-MODULE-DOWNLOAD-20261027`。
+
 ## 配置、安装与许可
 
-配置为 `%LOCALAPPDATA%/RIO-Monitor/settings.json`，JSON 格式。成功写入的预览记录位于同目录的 `screen-content/`，每台已写入设备包含 GIF 与校验 JSON；本地导入的歌词位于 `lyrics/`。字体、默认动画、音乐接口依赖和转换器包含在本地 EXE 中，运行时有临时解包与预览文件。选择安装温度组件后，另有 `%ProgramFiles%/RIO-Monitor/Temperature` 和 `%ProgramData%/RIO-Monitor` 中的服务/数据文件。退出、关闭温度开关和删除程序各自的行为详见组件文档。
+配置为 `%LOCALAPPDATA%/RIO-Monitor/settings.json`，JSON 格式。成功写入的预览记录位于同目录的 `screen-content/`，每台已写入设备包含 GIF 与校验 JSON；本地导入的歌词位于 `lyrics/`，已下载的扩展模块位于 `modules/`。字体、默认动画、音乐接口依赖和转换器包含在本地 EXE 中，运行时有临时解包与预览文件。选择安装温度组件后，另有 `%ProgramFiles%/RIO-Monitor/Temperature` 和 `%ProgramData%/RIO-Monitor` 中的服务/数据文件。退出、关闭温度开关和删除程序各自的行为详见组件文档。
 
 原代码采用 MIT 许可，私有素材和第三方依赖不因此改为 MIT。见 [第三方说明](THIRD-PARTY-NOTICES.md) 与 [发行许可、对应源码和 Qt 库替换说明](docs/distribution-licenses.md)。Qt/PySide 和 FFmpeg 的完整许可、版权及准确源入口随发行提供；以后打包会自动生成 `dist/RIO-System-Monitor-<版本>-licenses.zip` 并把材料带进 EXE。现有 rc0.1.10/11 只补充 Release 附件，不改变版本、标签或已发布的 EXE。主程序开发构建未签名；签名 PawnIO 驱动不代表 GUI 已签名。源代码测试、真实设备通信与用户视觉验收分别记录，不以其中之一代替其他结果。
 

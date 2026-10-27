@@ -40,8 +40,8 @@ class FrameSender:
     def lcd_info(self):
         if self.faulted:raise ProtocolError('Transport stopped; reconnect explicitly')
         self.tag=(self.tag+1)&0xffffffff
-        cdb=bytearray(16);cdb[0]=0xcd;cdb[5]=2
-        command=struct.pack('<4sIIBBB16s',b'USBC',self.tag,5,0,0,16,bytes(cdb))
+        cdb=bytearray(16);cdb[0]=0xcd;cdb[5]=3
+        command=struct.pack('<4sIIBBB16s',b'USBC',self.tag,5,0x80,0,16,bytes(cdb))
         try:
             if self.transport.write(0x01,command)!=len(command):raise ProtocolError('Short command write')
             data=self.transport.read(0x81,5)

@@ -15,7 +15,7 @@ class Transport:
         self.writes.append(data)
         if len(data)==31 and data.startswith(b'USBC'):
             _,self.tag,self.length,_,_,_,cdb=struct.unpack('<4sIIBBB16s',data)
-            self.info_pending=cdb[5]==2
+            self.info_pending=cdb[5]==3
         return len(data)
     def read(self,ep,length):
         assert ep==0x81
