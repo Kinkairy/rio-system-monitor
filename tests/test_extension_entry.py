@@ -5,7 +5,7 @@ os.environ.setdefault('QT_QUICK_BACKEND','software')
 from pathlib import Path
 from unittest.mock import Mock, patch
 import tempfile, threading, time, unittest
-from PySide6.QtCore import QObject, Signal, Slot, Property, QUrl, QMetaObject
+from PySide6.QtCore import QObject, Signal, Slot, Property, QUrl, QMetaObject, QPointF, Qt
 from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
@@ -43,6 +43,19 @@ class Module:
 def visible(obj): return obj.property('visible') and obj.property('enabled')
 
 
+def item(window, name):
+    pending = [window.contentItem()]
+    while pending:
+        current = pending.pop()
+        if current.objectName() == name: return current
+        pending.extend(current.childItems())
+
+
+def click(window, name):
+    target = item(window, name); point = target.mapToScene(QPointF(target.width()/2, target.height()/2)).toPoint()
+    QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point); QTest.qWait(40)
+
+
 class Installed:
     name, entry = 'demo', None
     def location(self): return ASSETS
@@ -76,7 +89,7 @@ class ExtensionEntryTests(unittest.TestCase):
     self.bridge = Bridge(self.app, Settings(language='zh'), Mock(), Frames(), capture=True)
     self.addCleanup(lambda: (self.bridge.save_timer.stop(), self.bridge.storage.close()))
 
-  def test_settings_page_opens_one_extension_popup_with_switch_and_settings_per_module(self):
+  def test_extensions_header_tab_shows_switch_and_settings_per_module(self):
     app, bridge = self.app, self.bridge
     fangcun = Fangcun()
     # Wired as in qt_app.main for installed modules.
@@ -89,10 +102,11 @@ class ExtensionEntryTests(unittest.TestCase):
     module = Module()
     try:
         assert (window.width(), window.height()) == (448, 730)
-        popup = window.findChild(QObject, 'extensionsPopup'); entry = window.findChild(QObject, 'extensionsButton')
-        assert 'ActionButton' in entry.metaObject().className() and not popup.property('visible')
-        QMetaObject.invokeMethod(entry, 'clicked'); QTest.qWait(40)
-        assert popup.property('visible') and 'DialogPopup' in popup.metaObject().className()
+        assert window.findChild(QObject, 'extensionsPopup') is None and window.findChild(QObject, 'extensionsButton') is None
+        settings, page, save = (window.findChild(QObject, n) for n in ('settingsPage', 'extensionsPage', 'saveButton'))
+        assert window.property('tab') == 0 and settings.property('visible') and not page.property('visible') and save.property('visible')
+        click(window, 'headerTab1')
+        assert window.property('tab') == 1 and page.property('visible') and not settings.property('visible') and not save.property('visible')
         cultivation = window.findChild(QObject, 'cultivationSwitch'); cooler = window.findChild(QObject, 'blacksharkSwitch')
         open_fangcun = window.findChild(QObject, 'fangcunOpenButton'); open_cooler = window.findChild(QObject, 'blacksharkOpenButton')
         assert not cultivation.property('checked') and not cooler.property('checked')
@@ -102,16 +116,16 @@ class ExtensionEntryTests(unittest.TestCase):
         assert not cultivation.property('checked')
         fangcun.refuse = False; fangcun.setEnabled(True); assert cultivation.property('checked') and visible(open_fangcun)
         QMetaObject.invokeMethod(open_fangcun, 'clicked'); QTest.qWait(40)
-        assert fangcun.opened == 1 and not popup.property('visible')
+        assert fangcun.opened == 1 and page.property('visible')
         bridge.storage.update(busy=True); bridge.changed.emit(); assert not cultivation.property('enabled')
         bridge.storage.update(busy=False); bridge.changed.emit()
-        QMetaObject.invokeMethod(popup, 'open'); QTest.qWait(40)
         cooler.setProperty('checked', True); QMetaObject.invokeMethod(cooler, 'toggled')
         assert bridge.s.blackshark_enabled and cooler.property('checked') and visible(open_cooler)
         QMetaObject.invokeMethod(open_cooler, 'clicked'); QTest.qWait(40)
-        assert module.pages == [0] and not popup.property('visible')
+        assert module.pages == [0] and page.property('visible')
         bridge.setLanguage('en'); QTest.qWait(20)
-        assert open_cooler.property('text') == 'Open settings' and entry.property('text') == 'Open'
+        assert open_cooler.property('text') == 'Open settings' and window.property('tabs').toVariant() == ['Settings', 'Extensions']
+        click(window, 'headerTab0'); assert settings.property('visible') and not page.property('visible')
     finally:
         window.hide(); engine.deleteLater(); app.processEvents()
 
@@ -126,7 +140,7 @@ class ExtensionEntryTests(unittest.TestCase):
     try:
         card = window.findChild(QObject, 'fangcunExtension'); switch = window.findChild(QObject, 'cultivationSwitch')
         opener = window.findChild(QObject, 'fangcunOpenButton')
-        QMetaObject.invokeMethod(window.findChild(QObject, 'extensionsButton'), 'clicked'); QTest.qWait(40)
+        click(window, 'headerTab1')
         assert card.property('detail') == '未下载 · 开启后下载 · 58 MB' and not switch.property('checked') and not opener.property('enabled')
         switch.setProperty('checked', True); QMetaObject.invokeMethod(switch, 'toggled'); fangcun_ext.poll(); QTest.qWait(20)
         assert card.property('detail') == '正在下载 25%' and card.property('progress') == .25 and switch.property('checked') and not opener.property('enabled')

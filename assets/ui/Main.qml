@@ -7,6 +7,8 @@ Rio.PanelWindow {
  id: win
  language: bridge.language
  heading: tr("Settings","设置")
+ tabs: [tr("Settings","设置"),tr("Extensions","扩展")]
+ onTabRequested: function(index){tab=index}
  title: "RIO System Monitor"
  onCloseRequested: bridge.hideWindow()
  onLanguageRequested: function(value){bridge.setLanguage(value)}
@@ -23,6 +25,7 @@ Rio.PanelWindow {
  component LanguageSelector: Rio.LanguageSelector {  }
  component RioSwitch: Rio.RioSwitch {  }
   Item { y: 0; width: 420; height: 702
+  Item { objectName: "settingsPage"; anchors.fill: parent; visible: win.tab===0
   Item { id: previewClip; objectName: "previewClip"; x: 20; y: 88; width: 170; height: 170; clip: true
    Image { id: screen; anchors.fill: parent; source: "image://monitor/frame?"+bridge.frameId; cache: false; smooth: true; rotation: bridge.rotation; fillMode: Image.PreserveAspectFit }
   }
@@ -45,11 +48,28 @@ Rio.PanelWindow {
   RioSwitch { objectName: "monitorSwitch"; x: 358; y: 439; checked: bridge.monitorChecked; enabled: !bridge.monitorBusy && !bridge.monitorExternal; onToggled: bridge.setMonitorEnabled(checked) }
   RioText { x: 24; y: 490; text: win.tr("Music appreciation","音乐欣赏模式"); color: "#dce3e6" }
   RioSwitch { objectName: "musicSwitch"; x: 358; y: 484; checked: bridge.musicEnabled; onToggled: bridge.setMusicEnabled(checked) }
-  RioText { x: 24; y: 535; text: win.tr("Extensions","扩展"); color: "#dce3e6" }
-  RioText { x: 24; y: 554; width: 270; text: win.tr("Fangcun · Fengshen Pro","方寸山 · 风神 Pro"); color: "#89979f"; font.pixelSize: 10; elide: Text.ElideRight }
-  ActionButton { objectName: "extensionsButton"; x: 310; y: 527; width: 90; height: 34; text: win.tr("Open","打开"); onClicked: extensionsPopup.open() }
-  RioText { x: 24; y: 590; text: win.tr("Start at login","登录后启动"); color: "#dce3e6" }
-  RioSwitch { id: autoSwitch; objectName: "autoSwitch"; x: 358; y: 584; checked: bridge.autostart; onToggled: bridge.setAutostart(checked) }
+  RioText { x: 24; y: 535; text: win.tr("Start at login","登录后启动"); color: "#dce3e6" }
+  RioSwitch { id: autoSwitch; objectName: "autoSwitch"; x: 358; y: 529; checked: bridge.autostart; onToggled: bridge.setAutostart(checked) }
+  }
+  // Extensions tab: one card per module, same content the former popup held.
+  ColumnLayout { objectName: "extensionsPage"; x: 20; y: 88; width: 380; spacing: 12; visible: win.tab===1
+   ExtensionCard {
+    id: fangcunCard
+    objectName: "fangcunExtension"; heading: win.tr("Fangcun","方寸山")
+    detail: win.extensionDetail(fangcunExt,win.tr("Cultivation mode on","修仙模式已开启"),win.tr("Cultivation mode off","修仙模式未开启"))
+    progress: fangcunExt.state==="downloading" ? fangcunExt.progress : -1; failed: fangcunExt.state==="error"
+    accessory: RioSwitch { objectName: "cultivationSwitch"; checked: fangcunExt.enabled; enabled: !bridge.storageBusy; onToggled: { fangcunExt.setEnabled(checked); checked=Qt.binding(function(){return fangcunExt.enabled}) } }
+    ActionButton { objectName: "fangcunOpenButton"; width: fangcunCard.actionWidth; height: 34; text: win.tr("Open settings","打开设置"); enabled: fangcunExt.enabled && fangcunExt.state==="ready"; onClicked: fangcunExt.open() }
+   }
+   ExtensionCard {
+    id: blacksharkCard
+    objectName: "blacksharkExtension"; heading: win.tr("Fengshen Pro","风神 Pro")
+    detail: win.extensionDetail(blacksharkExt,win.tr("Cooler control on","散热器控制已开启"),win.tr("Cooler control off","散热器控制未开启"))
+    progress: blacksharkExt.state==="downloading" ? blacksharkExt.progress : -1; failed: blacksharkExt.state==="error"
+    accessory: RioSwitch { objectName: "blacksharkSwitch"; checked: blacksharkExt.enabled; onToggled: { blacksharkExt.setEnabled(checked); checked=Qt.binding(function(){return blacksharkExt.enabled}) } }
+    ActionButton { objectName: "blacksharkOpenButton"; width: blacksharkCard.actionWidth; height: 34; text: win.tr("Open settings","打开设置"); enabled: blacksharkExt.enabled && blacksharkExt.state==="ready"; onClicked: blacksharkExt.open() }
+   }
+  }
   Rectangle { x: 20; y: 630; width: 380; height: 1; color: "#292f32" }
   Rectangle {
    objectName: "updateConnectionLamp"; x: 24; y: 662; width: 8; height: 8; radius: 4; antialiasing: true
@@ -101,7 +121,7 @@ Rio.PanelWindow {
     running: footerTrack.visible && footerProgressArea.indeterminate && win.visible
    }
   }
-  ActionButton { objectName: "saveButton"; x: 310; y: 649; width: 90; height: 34; text: win.tr("Save","保存"); fill: "#a7eb52"; ink: "#17210f"; onClicked: bridge.saveAndHide() }
+  ActionButton { objectName: "saveButton"; visible: win.tab===0; x: 310; y: 649; width: 90; height: 34; text: win.tr("Save","保存"); fill: "#a7eb52"; ink: "#17210f"; onClicked: bridge.saveAndHide() }
   }
 
  // Status line shared by every extension card: download state first, then the module's own mode.
@@ -131,28 +151,6 @@ Rio.PanelWindow {
   }
   Item { id: accessorySlot; x: parent.width-56; y: 14; width: 42; height: 24 }
   Row { id: actionRow; x: 14; y: parent.height-48; width: parent.width-28; height: 34; spacing: 8 }
- }
- DialogPopup {
-  id: extensionsPopup; objectName: "extensionsPopup"; height: 310
-  ColumnLayout { anchors.fill: parent; spacing: 12
-   RowLayout { Layout.fillWidth: true; RioText { text: win.tr("Extensions","扩展"); color: "#edf0f2"; font.pixelSize: 17; Layout.fillWidth: true } CloseButton { objectName: "extensionsCloseButton"; Layout.preferredWidth: 26; onClicked: extensionsPopup.close() } }
-   ExtensionCard {
-    id: fangcunCard
-    objectName: "fangcunExtension"; heading: win.tr("Fangcun","方寸山")
-    detail: win.extensionDetail(fangcunExt,win.tr("Cultivation mode on","修仙模式已开启"),win.tr("Cultivation mode off","修仙模式未开启"))
-    progress: fangcunExt.state==="downloading" ? fangcunExt.progress : -1; failed: fangcunExt.state==="error"
-    accessory: RioSwitch { objectName: "cultivationSwitch"; checked: fangcunExt.enabled; enabled: !bridge.storageBusy; onToggled: { fangcunExt.setEnabled(checked); checked=Qt.binding(function(){return fangcunExt.enabled}) } }
-    ActionButton { objectName: "fangcunOpenButton"; width: fangcunCard.actionWidth; height: 34; text: win.tr("Open settings","打开设置"); enabled: fangcunExt.enabled && fangcunExt.state==="ready"; onClicked: { extensionsPopup.close(); fangcunExt.open() } }
-   }
-   ExtensionCard {
-    id: blacksharkCard
-    objectName: "blacksharkExtension"; heading: win.tr("Fengshen Pro","风神 Pro")
-    detail: win.extensionDetail(blacksharkExt,win.tr("Cooler control on","散热器控制已开启"),win.tr("Cooler control off","散热器控制未开启"))
-    progress: blacksharkExt.state==="downloading" ? blacksharkExt.progress : -1; failed: blacksharkExt.state==="error"
-    accessory: RioSwitch { objectName: "blacksharkSwitch"; checked: blacksharkExt.enabled; onToggled: { blacksharkExt.setEnabled(checked); checked=Qt.binding(function(){return blacksharkExt.enabled}) } }
-    ActionButton { objectName: "blacksharkOpenButton"; width: blacksharkCard.actionWidth; height: 34; text: win.tr("Open settings","打开设置"); enabled: blacksharkExt.enabled && blacksharkExt.state==="ready"; onClicked: { extensionsPopup.close(); blacksharkExt.open() } }
-   }
-  }
  }
  DialogPopup {
   id: musicPopup; objectName: "musicPopup"; height: 410
