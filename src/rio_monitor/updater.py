@@ -109,10 +109,11 @@ def launch_install(staged,target,directory,version,wait_pids,arguments=('--show-
 
 class AutoUpdater:
     def __init__(self,directory,modules=None):
-        self.directory=Path(directory);self.stop=threading.Event();self.worker=None;self.pending=None
-        self.lock=threading.Lock();self.state=dict(state='idle',connection='unknown',progress=0)
-        # modules(stop) installs module updates after each program check and returns True when a restart would load them.
-        # restart: such packages are installed; relaunch: the host is exiting to load them.
+        # offer: the newer program the last check found; it downloads only when the settings link asks for it.
+        self.directory=Path(directory);self.stop=threading.Event();self.worker=None;self.pending=None;self.offer=None
+        self.lock=threading.Lock();self.state=dict(state='idle',connection='unknown',progress=0,version='')
+        # modules(stop) reads the module index after each program check, so module cards can offer their own updates.
+        # restart: a module update was installed from its card; relaunch: the host is exiting to load it.
         self.modules=modules;self.restart=False;self.relaunch=False
     def snapshot(self):
         with self.lock:return dict(self.state)
@@ -123,30 +124,41 @@ class AutoUpdater:
             if self.stop.is_set() or self.pending or (self.worker and self.worker.is_alive()):return
             self.state.update(state='checking',progress=0)
             self.worker=threading.Thread(target=self.run,daemon=True,name='RIO-update');self.worker.start()
+    def download(self):
+        """Settings link: download the offered program; it installs at the next idle restart."""
+        with self.lock:
+            if self.stop.is_set() or self.pending or not self.offer or (self.worker and self.worker.is_alive()):return
+            self.state.update(state='downloading',progress=0)
+            self.worker=threading.Thread(target=self.fetch,daemon=True,name='RIO-update');self.worker.start()
     def run(self):
         self.program()
-        # A staged program restarts RIO anyway; it reads the module index for its own interface after that.
-        if self.modules and not self.pending and not self.stop.is_set():
-            try:
-                if self.modules(self.stop):self.restart=True
+        # Module cards offer their own updates from the same check; nothing installs until one is clicked.
+        if self.modules and not self.stop.is_set():
+            try:self.modules(self.stop)
             except Exception:pass
     def program(self):
+        """Look for a newer program; it is only offered, never downloaded from here."""
         try:
             asset=latest_asset()
             self.update(connection='connected')
-            if not asset:self.update(state='latest');return
-            self.update(state='downloading')
+            if not asset:self.update(state='latest',version='');return
+            self.offer=asset;self.update(state='available',version=asset['version'])
+        except Exception as exc:
+            self.update(state='error',connection='failed');self.failed(exc)
+    def fetch(self):
+        asset=self.offer
+        try:
             staged=download_asset(asset,self.directory,self.stop,
                                   lambda done,total:self.update(progress=min(99,done*100//max(1,total))))
             if not self.stop.is_set():
                 self.pending=(staged,asset['version']);self.update(state='ready',progress=100)
         except Exception as exc:
-            snapshot=self.snapshot()
-            self.update(state='error',connection='failed' if snapshot['state']=='checking' else snapshot['connection'])
-            try:
-                self.directory.mkdir(parents=True,exist_ok=True)
-                (self.directory/'status.json').write_text(json.dumps(dict(status='check_failed',error=type(exc).__name__)),encoding='utf-8')
-            except OSError:pass
+            self.update(state='error');self.failed(exc)  # The connection worked; the download did not.
+    def failed(self,exc):
+        try:
+            self.directory.mkdir(parents=True,exist_ok=True)
+            (self.directory/'status.json').write_text(json.dumps(dict(status='check_failed',error=type(exc).__name__)),encoding='utf-8')
+        except OSError:pass
     def install_on_exit(self):
         self.stop.set()
         if self.pending:

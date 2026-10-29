@@ -74,11 +74,11 @@ class Downloadable(Installed):
 
 class Updatable(Installed):
     """An installed module whose index lists a newer package once read."""
-    def __init__(self): self.entry, self.installs = None, []
+    def __init__(self): self.entry, self.installs, self.gate = None, [], threading.Event()
     def refresh(self):
         self.entry = dict(version='rc0.2', sha256='c'*64, size=45_000); return self.entry
     def install(self, stop, progress, entry):
-        progress(1, 2); self.installs.append(entry['version'])
+        progress(1, 2); self.gate.wait(5); self.installs.append(entry['version'])
 
 
 def child(parent, name):
@@ -171,6 +171,9 @@ class ExtensionEntryTests(unittest.TestCase):
         assert card.property('detail') == '未下载 · 开启后下载 · 58 MB' and not switch.property('checked') and not opener.property('enabled')
         switch.setProperty('checked', True); QMetaObject.invokeMethod(switch, 'toggled'); fangcun_ext.poll(); QTest.qWait(20)
         assert card.property('detail') == '正在下载 25%' and card.property('progress') == .25 and switch.property('checked') and not opener.property('enabled')
+        # The switch waits for the download; the update link appears only once the module is installed.
+        assert not switch.property('enabled') and not child(item(window, 'fangcunExtension'), 'moduleUpdateLink').property('visible')
+        QTest.qWait(200); assert switch.property('indicator').property('color').name() == '#587c2b'  # Dimmed, still reads as on.
         assert any(v.property('visible') for v in window.findChildren(QObject, 'downloadTrack'))
         store.gate.set()
         for _ in range(100):
@@ -180,11 +183,12 @@ class ExtensionEntryTests(unittest.TestCase):
         QTest.qWait(20)
         assert loaded == [ASSETS] and fangcun.enabled and card.property('detail') == '修仙模式已开启'
         assert card.property('progress') == -1 and opener.property('enabled') and not card.property('failed')
+        assert switch.property('enabled') and visible(child(item(window, 'fangcunExtension'), 'moduleUpdateLink'))
     finally:
         window.hide(); engine.deleteLater(); app.processEvents()
 
 
-  def test_cards_show_module_versions_and_check_then_upgrade_each_module(self):
+  def test_cards_show_module_versions_and_offer_each_update_behind_a_link(self):
     app, bridge = self.app, self.bridge
     store, restarts = Updatable(), []
     fangcun_ext = Extension(Installed(), is_on=lambda: False, load=lambda assets: None, set_on=lambda value: None, open_window=lambda: None)
@@ -192,25 +196,33 @@ class ExtensionEntryTests(unittest.TestCase):
                                installed=lambda: restarts.append(True))
     fangcun_ext.start(); blackshark_ext.start()
     engine, window = load_settings(bridge, fangcun_ext, blackshark_ext)
+    def press(link):
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, link.mapToScene(link.boundingRect().center()).toPoint())
     try:
         click(window, 'headerTab1')
         fangcun_card, card = item(window, 'fangcunExtension'), item(window, 'blacksharkExtension')
         assert child(fangcun_card, 'moduleVersion').property('text') == 'rc0.1' and child(card, 'moduleVersion').property('text') == 'rc0.1'
-        button, opener = child(card, 'moduleUpdateButton'), child(card, 'blacksharkOpenButton')
-        assert visible(button) and button.property('text') == '↻' and opener.property('width') == card.property('width')-28-46
-        assert card.property('detail') == '散热器控制未开启'
-        click(window, 'headerTab1'); point = button.mapToScene(button.boundingRect().center()).toPoint()
-        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point); settle(blackshark_ext); QTest.qWait(20)
-        assert card.property('detail') == '发现新版本 rc0.2' and button.property('text') == '↑' and visible(button)
+        link, opener, switch = child(card, 'moduleUpdateLink'), child(card, 'blacksharkOpenButton'), child(card, 'blacksharkSwitch')
+        assert visible(link) and link.property('text') == 'Check updates' and opener.property('width') == card.property('width')-28
+        assert card.property('detail') == '散热器控制未开启' and child(card, 'moduleUpdateButton') is None
+        press(link); settle(blackshark_ext); QTest.qWait(20)
+        assert card.property('detail') == '发现新版本 rc0.2' and link.property('text') == 'Update to rc0.2' and visible(link)
         assert child(card, 'moduleVersion').property('text') == 'rc0.1' and store.installs == []
-        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point); settle(blackshark_ext); QTest.qWait(20)
-        assert store.installs == ['rc0.2'] and restarts == [True]
-        assert card.property('detail') == '已升级到 rc0.2 · 重启后生效' and button.property('text') == '✓' and not button.property('enabled')
+        press(link)
+        for _ in range(100):
+            blackshark_ext.poll()
+            if blackshark_ext.progress == .5: break
+            time.sleep(.01)
+        QTest.qWait(20)
+        assert card.property('detail') == '正在升级 50%' and not link.property('enabled') and not switch.property('enabled')
+        store.gate.set(); settle(blackshark_ext); QTest.qWait(20)
+        assert store.installs == ['rc0.2'] and restarts == [True] and switch.property('enabled')
+        assert card.property('detail') == '已升级到 rc0.2 · 重启后生效' and link.property('text') == 'Check updates' and not link.property('enabled')
         assert child(card, 'moduleVersion').property('text') == 'rc0.1'  # The running package until RIO restarts.
         # The other card is untouched by this module's update.
-        assert child(fangcun_card, 'moduleUpdateButton').property('text') == '↻' and fangcun_card.property('detail') == '修仙模式未开启'
+        assert child(fangcun_card, 'moduleUpdateLink').property('text') == 'Check updates' and fangcun_card.property('detail') == '修仙模式未开启'
     finally:
-        window.hide(); engine.deleteLater(); app.processEvents()
+        store.gate.set(); window.hide(); engine.deleteLater(); app.processEvents()
 
 
   def test_blackshark_switch_starts_stops_and_never_interrupts_a_device_write(self):

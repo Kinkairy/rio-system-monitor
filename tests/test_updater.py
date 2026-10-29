@@ -43,47 +43,58 @@ class UpdateTests(unittest.TestCase):
    with patch('urllib.request.urlopen') as request:
     download_asset(asset,tmp,progress=lambda done,total:progress.append((done,total)));request.assert_not_called()
    self.assertEqual(progress,[(len(content),len(content))])
- def test_manual_check_reports_progress_without_starting_duplicate_downloads(self):
+ def test_checks_only_offer_a_new_program_and_a_click_downloads_it_once(self):
   entered=threading.Event();finish=threading.Event()
   def download(asset,directory,stop,progress):
    progress(42,100);entered.set();finish.wait(3);return Path(directory)/'new.exe'
   with tempfile.TemporaryDirectory() as tmp:
    updater=AutoUpdater(tmp)
    with patch('rio_monitor.updater.latest_asset',return_value=self.asset()) as latest,patch('rio_monitor.updater.download_asset',side_effect=download) as fetch:
+    updater.download();self.assertIsNone(updater.worker)  # Nothing is offered before a check.
+    for _ in range(2):  # The startup check and a later automatic one only offer the program.
+     updater.check();updater.worker.join(3)
+     self.assertEqual(updater.snapshot(),dict(state='available',connection='connected',progress=0,version='rc0.1.2'))
+    fetch.assert_not_called();self.assertIsNone(updater.pending)
     try:
-     updater.check();self.assertTrue(entered.wait(2))
-     self.assertEqual(updater.snapshot(),dict(state='downloading',connection='connected',progress=42))
-     updater.check();latest.assert_called_once();fetch.assert_called_once()
+     updater.download();self.assertTrue(entered.wait(2))
+     self.assertEqual(updater.snapshot(),dict(state='downloading',connection='connected',progress=42,version='rc0.1.2'))
+     updater.download();updater.check();fetch.assert_called_once();self.assertEqual(latest.call_count,2)
     finally:finish.set();updater.worker.join(3)
-    self.assertEqual(updater.snapshot(),dict(state='ready',connection='connected',progress=100))
-    updater.check();fetch.assert_called_once()
+    self.assertEqual(updater.snapshot(),dict(state='ready',connection='connected',progress=100,version='rc0.1.2'))
+    self.assertEqual(updater.pending,(Path(tmp)/'new.exe','rc0.1.2'))
+    updater.check();updater.download();fetch.assert_called_once();self.assertEqual(latest.call_count,2)
  def test_latest_connection_failure_and_download_failure_remain_distinct(self):
   with tempfile.TemporaryDirectory() as tmp:
-   for result,error,state,connection in ((None,None,'latest','connected'),(None,URLError('Offline'),'error','failed'),(self.asset(),None,'error','connected')):
+   for result,error,state,connection in ((None,None,'latest','connected'),(None,URLError('Offline'),'error','failed'),(self.asset(),None,'available','connected')):
     updater=AutoUpdater(tmp)
-    with self.subTest(state=state,connection=connection),patch('rio_monitor.updater.latest_asset',return_value=result,side_effect=error),patch('rio_monitor.updater.download_asset',side_effect=ValueError('Incomplete')):
+    with self.subTest(state=state,connection=connection),patch('rio_monitor.updater.latest_asset',return_value=result,side_effect=error):
      updater.check();updater.worker.join(3)
      self.assertFalse(updater.worker.is_alive());self.assertEqual(updater.snapshot()['state'],state)
      self.assertEqual(updater.snapshot()['connection'],connection);self.assertIsNone(updater.pending)
+   # The offered download failing keeps the connection state and stages nothing.
+   with patch('rio_monitor.updater.download_asset',side_effect=ValueError('Incomplete')):
+    updater.download();updater.worker.join(3)
+   self.assertEqual((updater.snapshot()['state'],updater.snapshot()['connection'],updater.pending),('error','connected',None))
  def test_module_update_versions_order_after_their_program_version(self):
   self.assertLess(version_key('rc0.1.16'),version_key('rc0.1.16.1'));self.assertLess(version_key('rc0.1.16.1'),version_key('rc0.1.16.2'))
   self.assertLess(version_key('rc0.1.16.9'),version_key('rc0.1.17'));self.assertEqual(version_key('rc0.1'),(0,1,0,0))
   self.assertEqual(version_key('modules'),(0,0,0,0))
- def test_module_updates_run_after_a_current_program_check_and_restart_only_on_request(self):
+ def test_module_checks_follow_every_program_check_and_never_restart_on_their_own(self):
   with tempfile.TemporaryDirectory() as tmp:
    calls=[];updater=AutoUpdater(tmp,modules=lambda stop:calls.append(stop) or True)
    with patch('rio_monitor.updater.latest_asset',return_value=None):updater.check();updater.worker.join(3)
-   self.assertEqual(calls,[updater.stop]);self.assertTrue(updater.restart);self.assertEqual(updater.snapshot()['state'],'latest')
-   # A staged program wins: its own packages replace the modules, so they are not checked.
-   pending=AutoUpdater(tmp,modules=lambda stop:calls.append(stop) or True)
-   with patch('rio_monitor.updater.latest_asset',return_value=self.asset()),patch('rio_monitor.updater.download_asset',return_value=Path(tmp)/'new.exe'):
-    pending.check();pending.worker.join(3)
-   self.assertEqual(len(calls),1);self.assertFalse(pending.restart)
+   self.assertEqual(calls,[updater.stop]);self.assertFalse(updater.restart);self.assertEqual(updater.snapshot()['state'],'latest')
+   # An offered program does not hold the modules back: their cards offer their own updates.
+   offered=AutoUpdater(tmp,modules=lambda stop:calls.append(stop))
+   with patch('rio_monitor.updater.latest_asset',return_value=self.asset()):offered.check();offered.worker.join(3)
+   self.assertEqual(calls,[updater.stop,offered.stop]);self.assertEqual(offered.snapshot()['state'],'available')
    failing=AutoUpdater(tmp,modules=Mock(side_effect=OSError('offline')))
    with patch('rio_monitor.updater.latest_asset',side_effect=URLError('offline')):failing.check();failing.worker.join(3)
    self.assertFalse(failing.restart);failing.modules.assert_called_once()
+   # A module upgraded from its card asks for the restart; quitting by hand does not restart RIO.
+   updater.restart=True
    with patch('rio_monitor.updater.launch_install') as install:
-    updater.install_on_exit();install.assert_not_called()  # Quitting by hand does not restart RIO.
+    updater.install_on_exit();install.assert_not_called()
     updater.relaunch=True;updater.install_on_exit()
    self.assertIsNone(install.call_args.args[0]);self.assertEqual(install.call_args.kwargs['arguments'],())
  @unittest.skipUnless(os.name=='nt','Windows update handoff')

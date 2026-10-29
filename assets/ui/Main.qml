@@ -57,14 +57,14 @@ Rio.PanelWindow {
     id: fangcunCard
     objectName: "fangcunExtension"; heading: win.tr("Fangcun","方寸山")
     ext: fangcunExt; detail: win.extensionDetail(fangcunExt,win.tr("Cultivation mode on","修仙模式已开启"),win.tr("Cultivation mode off","修仙模式未开启"))
-    accessory: RioSwitch { objectName: "cultivationSwitch"; checked: fangcunExt.enabled; enabled: !bridge.storageBusy; onToggled: { fangcunExt.setEnabled(checked); checked=Qt.binding(function(){return fangcunExt.enabled}) } }
+    accessory: RioSwitch { objectName: "cultivationSwitch"; checked: fangcunExt.enabled; enabled: !bridge.storageBusy && !fangcunCard.busy; onToggled: { fangcunExt.setEnabled(checked); checked=Qt.binding(function(){return fangcunExt.enabled}) } }
     ActionButton { objectName: "fangcunOpenButton"; width: fangcunCard.actionWidth; height: 34; text: win.tr("Open settings","打开设置"); enabled: fangcunExt.enabled && fangcunExt.state==="ready"; onClicked: fangcunExt.open() }
    }
    ExtensionCard {
     id: blacksharkCard
     objectName: "blacksharkExtension"; heading: win.tr("Fengshen Pro","风神 Pro")
     ext: blacksharkExt; detail: win.extensionDetail(blacksharkExt,win.tr("Cooler control on","散热器控制已开启"),win.tr("Cooler control off","散热器控制未开启"))
-    accessory: RioSwitch { objectName: "blacksharkSwitch"; checked: blacksharkExt.enabled; onToggled: { blacksharkExt.setEnabled(checked); checked=Qt.binding(function(){return blacksharkExt.enabled}) } }
+    accessory: RioSwitch { objectName: "blacksharkSwitch"; checked: blacksharkExt.enabled; enabled: !blacksharkCard.busy; onToggled: { blacksharkExt.setEnabled(checked); checked=Qt.binding(function(){return blacksharkExt.enabled}) } }
     ActionButton { objectName: "blacksharkOpenButton"; width: blacksharkCard.actionWidth; height: 34; text: win.tr("Open settings","打开设置"); enabled: blacksharkExt.enabled && blacksharkExt.state==="ready"; onClicked: blacksharkExt.open() }
    }
   }
@@ -79,17 +79,19 @@ Rio.PanelWindow {
   EnglishText { id: currentVersion; objectName: "currentVersion"; x: 44; y: 660; text: bridge.version; color: "#829096"; font.pixelSize: 10 }
   ActionButton {
    id: updateLink; objectName: "checkUpdatesButton"
-   x: currentVersion.x+currentVersion.implicitWidth+6; y: 649; width: 72; height: 34; text: "Check updates"
+   x: currentVersion.x+currentVersion.implicitWidth+6; y: 649; width: Math.max(72,implicitContentWidth); height: 34
+   // A newer program found by any check is only offered; this click starts its download.
+   text: bridge.updateState==="available" ? "Update to "+bridge.updateVersion : "Check updates"
    leftPadding: 0; rightPadding: 0; showOutline: false; fill: "transparent"
    enabled: bridge.updateState!=="checking" && bridge.updateState!=="downloading" && bridge.updateState!=="ready"
    opacity: 1; ink: !enabled ? "#829074" : hovered || down || activeFocus ? "#d1ff9b" : "#a7eb52"
    background: Item {}
    font.family: currentVersion.font.family; font.pixelSize: currentVersion.font.pixelSize; font.underline: true
    contentItem: EnglishText { text: updateLink.text; color: updateLink.ink; font: updateLink.font; verticalAlignment: Text.AlignVCenter }
-   onClicked: bridge.checkUpdates()
+   onClicked: bridge.updateState==="available" ? bridge.startUpdate() : bridge.checkUpdates()
   }
   Item {
-   id: footerProgressArea; objectName: "footerProgressArea"; x: 177; y: 649; width: 117; height: 34
+   id: footerProgressArea; objectName: "footerProgressArea"; x: Math.max(177,updateLink.x+updateLink.width+15); y: 649; width: 117; height: 34
    visible: bridge.footerStatus!==""
    property bool indeterminate: bridge.footerProgress<0
    property real motion: 0
@@ -135,7 +137,7 @@ Rio.PanelWindow {
   if(ext.updateState==="failed") return tr("Update failed · Try again later","更新失败 · 稍后再试")
   return ext.enabled ? on : off
  }
- // One card per extension: name and module version, status line, optional mode switch, actions and the update button.
+ // One card per extension: name, module version and its update link, status line, optional mode switch and actions.
  component ExtensionCard: Item {
   default property alias actions: actionRow.data
   property alias accessory: accessorySlot.data
@@ -145,12 +147,27 @@ Rio.PanelWindow {
   property string detail: ""
   property real progress: ext && (ext.state==="downloading" || ext.updateState==="upgrading") ? ext.progress : -1
   property bool failed: ext !== null && (ext.state==="error" || ext.updateState==="failed")
+  // A download or upgrade in progress keeps the switch where it is until it finishes.
+  readonly property bool busy: ext !== null && (ext.state==="downloading" || ext.updateState==="upgrading")
   Layout.fillWidth: true; implicitHeight: 108
   FieldSurface { anchors.fill: parent }
   Column { x: 14; y: 12; width: parent.width-84; spacing: 3
    Row { id: titleRow; spacing: 6
     RioText { id: headingText; text: heading; color: "#edf0f2"; font.pixelSize: 15 }
     RioText { objectName: "moduleVersion"; anchors.baseline: headingText.baseline; text: ext ? ext.version : ""; color: "#89979f"; font.pixelSize: 10 }
+    // The program's own link, per module: checks its index, then offers the version found; only that click upgrades.
+    ActionButton {
+     id: moduleLink; objectName: "moduleUpdateLink"; anchors.baseline: headingText.baseline
+     readonly property string mode: ext ? ext.updateState : ""
+     visible: ext !== null && ext.updatable; enabled: mode!=="checking" && mode!=="upgrading" && mode!=="installed"
+     text: mode==="available" ? "Update to "+ext.newVersion : "Check updates"
+     implicitHeight: 18; topPadding: 0; bottomPadding: 0; leftPadding: 0; rightPadding: 0; showOutline: false; fill: "transparent"
+     opacity: 1; ink: !enabled ? "#829074" : hovered || down || activeFocus ? "#d1ff9b" : "#a7eb52"
+     background: Item {}
+     font.family: "Segoe UI"; font.pixelSize: 10; font.underline: true
+     contentItem: EnglishText { text: moduleLink.text; color: moduleLink.ink; font: moduleLink.font; verticalAlignment: Text.AlignVCenter }
+     onClicked: mode==="available" ? ext.upgrade() : ext.checkUpdate()
+    }
    }
    RioText { width: parent.width; text: detail; color: failed ? "#eb7070" : "#89979f"; font.pixelSize: 10; elide: Text.ElideRight }
   }
@@ -160,22 +177,7 @@ Rio.PanelWindow {
    Rectangle { width: parent.width*Math.max(0,Math.min(1,progress)); height: 4; radius: 2; color: "#a7eb52" }
   }
   Item { id: accessorySlot; x: parent.width-56; y: 14; width: 42; height: 24 }
-  Row { id: actionRow; x: 14; y: parent.height-48; width: parent.width-28-(updateButton.visible ? 46 : 0); height: 34; spacing: 8 }
-  // One button per module: ↻ checks the module index, ↑ installs the version found, ✓ when nothing is left to do.
-  RefreshButton {
-   id: updateButton; objectName: "moduleUpdateButton"; x: parent.width-52; y: parent.height-48; height: 34
-   readonly property string mode: ext ? ext.updateState : ""
-   readonly property bool busy: mode==="checking" || mode==="upgrading"
-   property real turn: 0
-   visible: ext !== null && ext.updatable; enabled: !busy && mode!=="installed"
-   text: mode==="available" ? "↑" : mode==="latest" || mode==="installed" ? "✓" : "↻"
-   fill: mode==="available" ? "#a7eb52" : "#24282b"; ink: mode==="available" ? "#17210f" : "#a7eb52"
-   Accessible.name: ToolTip.text; ToolTip.visible: hovered
-   ToolTip.text: mode==="available" ? win.tr("Update to ","升级到 ")+ext.newVersion : win.tr("Check for updates","检查更新")
-   onClicked: mode==="available" ? ext.upgrade() : ext.checkUpdate()
-   NumberAnimation on turn { from: 0; to: 360; duration: 900; loops: Animation.Infinite; running: updateButton.busy && updateButton.visible }
-   Binding { target: updateButton.contentItem; property: "rotation"; value: updateButton.busy ? updateButton.turn : 0 }
-  }
+  Row { id: actionRow; x: 14; y: parent.height-48; width: parent.width-28; height: 34; spacing: 8 }
  }
  DialogPopup {
   id: musicPopup; objectName: "musicPopup"; height: 410

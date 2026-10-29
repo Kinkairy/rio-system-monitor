@@ -27,6 +27,12 @@ class BridgeTests(unittest.TestCase):
   updater=AutoUpdater('unused-updates');self.b.updater=updater
   with patch.object(updater,'check',side_effect=lambda:updater.update(state='checking')) as check:
    self.b.checkUpdates();check.assert_called_once();self.assertEqual(self.b.updateState,'checking')
+  # A found program is only offered; the footer link's click starts the download.
+  updater.update(state='available',connection='connected',version='rc0.1.20');self.b.consume()
+  self.assertEqual((self.b.footerStatus,self.b.updateVersion,self.b.footerBusy),('发现新版本 rc0.1.20','rc0.1.20',False))
+  self.b.setLanguage('en');self.assertEqual(self.b.footerStatus,'New version rc0.1.20');self.b.setLanguage('zh')
+  with patch.object(updater,'download',side_effect=lambda:updater.update(state='downloading')) as download:
+   self.b.startUpdate();download.assert_called_once();self.assertEqual(self.b.updateState,'downloading')
   updater.update(state='downloading',connection='connected',progress=42);self.b.consume()
   self.assertAlmostEqual(self.b.footerProgress,.42);self.assertTrue(self.b.footerBusy)
   self.b.monitor.busy=True;self.b.monitor.operation='installing';self.b.changed.emit()
@@ -44,7 +50,7 @@ class BridgeTests(unittest.TestCase):
   from rio_monitor.updater import AutoUpdater
   self.b.capture=False;self.b.updater=AutoUpdater('unused-updates')
   with patch.object(self.b,'exit') as exit:
-   for state in ('checking','downloading','error'):
+   for state in ('checking','available','downloading','error'):
     self.b.updater.update(state=state);self.b.consume()
    exit.assert_not_called()
    self.b.updater.update(state='ready',progress=100);self.b.storage.update(busy=True)

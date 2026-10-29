@@ -67,9 +67,13 @@ class Bridge(QObject):
  version=Property(str,lambda self:__version__,constant=True)
  updateState=Property(str,lambda self:self.update_snapshot['state'],notify=changed)
  updateConnection=Property(str,lambda self:self.update_snapshot['connection'],notify=changed)
+ updateVersion=Property(str,lambda self:self.update_snapshot.get('version',''),notify=changed)
  @Slot()
  def checkUpdates(self):
   if self.updater:self.updater.check();self.consume()
+ @Slot()
+ def startUpdate(self):
+  if self.updater:self.updater.download();self.consume()
  def getFooterStatus(self):
   monitor=self.monitor.snapshot();storage=self.storage.snapshot();zh=self.s.language=='zh'
   if monitor['busy']:
@@ -77,6 +81,7 @@ class Bridge(QObject):
   if storage['busy']:
    labels={'prepare':('Preparing media…','正在转换媒体…'),'connecting':('Connecting…','正在连接屏幕…'),'erase':('Preparing storage…','正在准备存储…'),'write':('Writing media…','正在写入媒体…')}
    return labels.get(storage['phase'],labels['prepare'])[1 if zh else 0]
+  if self.updateState=='available':return ('发现新版本 ' if zh else 'New version ')+self.updateVersion
   labels={'checking':('Checking…','正在检测更新…'),'downloading':('Downloading…','正在下载更新'),'ready':('Restarting…','正在重启更新…'),'error':('Update failed','更新失败 · 请重试')}
   return labels.get(self.updateState,('',''))[1 if zh else 0]
  footerStatus=Property(str,getFooterStatus,notify=changed)
@@ -362,7 +367,7 @@ def main():
  assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets';app.setWindowIcon(QIcon(str(assets/'rio-icon.ico')))
  from .updater import AutoUpdater
  # Module updates are checked after the program's; bridge is bound below, before the first check runs.
- updater=AutoUpdater(config_path().parent/'updates',modules=lambda stop:update_modules(bridge.extensions,stop)) if getattr(sys,'frozen',False) and not capture_mode and not args.self_test else None
+ updater=AutoUpdater(config_path().parent/'updates',modules=lambda stop:update_modules(bridge.extensions)) if getattr(sys,'frozen',False) and not capture_mode and not args.self_test else None
  settings=Settings(weather_mode='off',language='zh',game_enabled=False) if capture_mode else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not capture_mode);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets,cache_dir=None if capture_mode else config_path().parent/'screen-content');music=Music(config_path().parent/'lyrics',settings.music_enabled,settings.music_online_lyrics,settings.music_source,start=not capture_mode);bridge=Bridge(app,settings,weather,provider,capture_mode,monitor=monitor,storage=storage,music=music,updater=updater)
  engine=QQmlApplicationEngine();install_ui(engine,assets);bridge.ui_engine=engine;game_provider=Frames()
  save_path=(args.fangcun_capture or args.ui_capture or config_path().parent)/'fangcun-save.json'

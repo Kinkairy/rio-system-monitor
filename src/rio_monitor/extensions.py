@@ -143,15 +143,6 @@ class ModuleStore:
             if old.is_dir() and old not in keep:
                 shutil.rmtree(old, ignore_errors=True)
 
-    def update(self, index, stop=None):
-        """Take the entries of a fresh index and install the chosen package beside the one in use; True once installed."""
-        self.refresh(index)
-        current, entry = self.current(), self.entry
-        if current is None or entry is None or entry['sha256'] == current['sha256']:
-            return False
-        self.install(stop, entry=entry)
-        return True
-
     def reject(self):
         """The package in use failed to load: never pick it again and fall back to the one before it; False when none is left."""
         current = self.current()
@@ -167,23 +158,14 @@ class ModuleStore:
         return self.current() is not None
 
 
-def update_modules(extensions, stop=None):
-    """Updater step: read the module index once and update each loaded module; True when a restart would load one."""
+def update_modules(extensions):
+    """Updater step: read the module index once; each card offers a newer package, installed only when clicked."""
     try:
         index = fetch_index()
     except Exception:
-        return False  # No reachable index: every installed package stays as it is.
-    installed = False
+        return  # No reachable index: the cards keep what they show.
     for ext in extensions.values():
-        if ext.state != 'ready':
-            ext.store.refresh(index)  # Shows the download size before the module is first switched on.
-            continue
-        try:
-            if ext.store.update(index, stop):
-                installed, ext.staged = True, ext.store.current()  # The card shows it until the restart loads it.
-        except Exception:
-            pass  # A failed download or a mismatched package keeps the one in use.
-    return installed
+        ext.offer(index)
 
 
 class Extension(QObject):
@@ -198,9 +180,9 @@ class Extension(QObject):
         self.assets = store.location()
         self._state = 'ready' if self.assets is not None else 'missing'
         self._progress, self.stop, self.worker, self.result, self.error = 0., threading.Event(), None, None, ''
-        # The card's own update check: what it shows, the version it offers or installed, and its worker's result.
-        # loaded is the package running now; staged is one the updater installed for the next start.
-        self.loaded, self.staged, self._update, self._offer = None, None, '', ''
+        # The card's update state: what it shows, the version it offers or installed, and its worker's result.
+        # loaded is the package running now; found is a newer version the updater's check listed, offered at the next poll.
+        self.loaded, self.found, self._update, self._offer = None, None, '', ''
         self.checker, self.update_result, self.update_at = None, None, 0.
 
     def _size(self):
@@ -267,7 +249,7 @@ class Extension(QObject):
 
     @Slot()
     def checkUpdate(self):
-        """Card button: read the module index now; a different package it lists is then offered to upgrade()."""
+        """Card link: read the module index now; a different package it lists is then offered to upgrade()."""
         if not self.updatable or self.checker or self._update == 'installed':
             return
         def check():
@@ -279,7 +261,7 @@ class Extension(QObject):
 
     @Slot()
     def upgrade(self):
-        """Card button: install the offered package beside the one in use; it loads at the next start."""
+        """Card link, clicked on an offer: install the package beside the one in use; it loads at the next start."""
         entry = self.store.entry
         if self._update != 'available' or self.checker or entry is None:
             return
@@ -288,6 +270,12 @@ class Extension(QObject):
             return 'installed', entry['version']
         self.stop.clear(); self._progress = 0.
         self._work('upgrading', install)
+
+    def offer(self, index):
+        """Updater step, off the GUI thread: list this module's packages; a newer one is offered at the next poll."""
+        entry = self.store.refresh(index)  # Before the first download this also gives the card its download size.
+        if self.updatable and entry and entry['sha256'] != (self.loaded or {}).get('sha256'):
+            self.found = entry['version']
 
     def _work(self, state, job):
         def run():
@@ -301,9 +289,12 @@ class Extension(QObject):
         self.changed.emit()
 
     def _poll_update(self):
-        if self.staged and not self.checker:
-            self._update, self._offer, self.staged = 'installed', self.staged['version'], None
-            self.changed.emit()
+        if self.found and not self.checker:
+            # The updater's check offers what the card's own would; an offer, upgrade or install already shown stays.
+            if self._update in ('', 'latest', 'failed'):
+                self._update, self._offer = 'available', self.found
+                self.changed.emit()
+            self.found = None
         if self.checker is None:
             # A result that needs nothing more fades back to the module's own status line.
             if self._update in ('latest', 'failed') and time.monotonic() - self.update_at > 5:

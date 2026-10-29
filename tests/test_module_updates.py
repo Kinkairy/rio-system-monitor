@@ -94,7 +94,14 @@ class UpdateTests(unittest.TestCase):
         return ext
 
     def check(self, ext):
-        return update_modules({'demo': ext})
+        """The updater's step: read the index; the card shows what it offers at its next poll."""
+        update_modules({'demo': ext}); ext.poll()
+        return ext.updateState, ext.newVersion
+
+    def upgrade(self, ext):
+        """A click on the card's link once it offers a version; returns the package now recorded in use."""
+        ext.upgrade(); settle(ext)
+        return self.record()['active']['version']
 
     def record(self): return json.loads((self.tmp/'modules/demo/active.json').read_text())
 
@@ -106,32 +113,36 @@ class UpdateTests(unittest.TestCase):
         ext.setEnabled(True); settle(ext)  # Nothing listed yet.
         self.assertEqual(ext.state, 'error'); self.assertFalse((self.tmp/'modules/demo/active.json').exists())
         self.release('rc0.1', module_zip('rc0.1')); newest = module_zip('rc0.2'); self.release('rc0.2', newest)
-        self.assertFalse(self.check(ext)); self.assertEqual((ext.version, ext.downloadSize), ('rc0.2', f'{max(1, round(len(newest)/1000))} KB'))
+        self.assertEqual(self.check(ext), ('', '')); self.assertEqual((ext.version, ext.downloadSize), ('rc0.2', f'{max(1, round(len(newest)/1000))} KB'))
         ext.setEnabled(True); settle(ext)
         self.assertEqual((ext.state, ext.version, ext.updatable), ('ready', 'rc0.2', True))
         self.assertEqual((self.loaded, self.record()['active']['version']), ([('rc0.2', 'rc0.2')], 'rc0.2'))
 
-    def test_updates_install_beside_the_package_in_use_and_fall_back(self):
+    def test_updates_are_offered_then_install_beside_the_package_in_use_and_fall_back(self):
         self.release('rc0.1', module_zip('rc0.1'))
         ext = self.launch()
         self.assertEqual((ext.state, ext.version, self.loaded), ('ready', 'rc0.1', [('rc0.1', 'rc0.1')]))
-        self.assertFalse(self.check(ext))  # Already installed.
-        # An update: listed, downloaded beside the loaded package, used after the restart.
+        self.assertEqual(self.check(ext), ('', ''))  # Already installed.
+        # An update: listed and offered on the card; nothing is downloaded or restarted until it is clicked.
         second = self.release('rc0.2', module_zip('rc0.2'))
-        self.assertTrue(self.check(ext)); self.assertEqual((self.loaded, ext.version), ([('rc0.1', 'rc0.1')], 'rc0.1'))
-        settle(ext); self.assertEqual((ext.updateState, ext.newVersion), ('installed', 'rc0.2'))  # The card says a restart loads it.
-        self.assertEqual(self.record()['active']['version'], 'rc0.2'); self.assertEqual(len(self.folders()), 2)
+        self.assertEqual(self.check(ext), ('available', 'rc0.2'))
+        self.assertEqual((self.record()['active']['version'], self.folders(), self.restarts), ('rc0.1', [self.rows[0]['sha256'][:16]], []))
+        ext.update_at -= 10; self.assertEqual(self.check(ext), ('available', 'rc0.2'))  # The offer stays until clicked.
+        # The click downloads it beside the loaded package; the restart loads it.
+        self.assertEqual(self.upgrade(ext), 'rc0.2')
+        self.assertEqual((ext.updateState, ext.newVersion, self.restarts, ext.version, len(self.folders())), ('installed', 'rc0.2', [True], 'rc0.1', 2))
+        self.assertEqual(self.check(ext), ('installed', 'rc0.2'))  # Waits for the restart instead of offering it again.
         ext = self.launch(); self.assertEqual((self.loaded, ext.version), ([('rc0.2', 'rc0.2')], 'rc0.2'))
         # A broken update is dropped at load for the package before it and never picked again.
         broken = self.release('rc0.3', module_zip('rc0.3', broken=True))
-        self.assertTrue(self.check(ext))
+        self.assertEqual(self.check(ext), ('available', 'rc0.3')); self.upgrade(ext)
         ext = self.launch()
         self.assertEqual((ext.state, ext.version, self.loaded), ('ready', 'rc0.2', [('rc0.2', 'rc0.2')]))
         self.assertEqual((self.record()['active']['sha256'], self.record()['bad']), (second['sha256'], [broken['sha256']]))
-        self.assertFalse(self.check(ext)); self.assertEqual(self.launch().state, 'ready'); self.assertEqual(self.loaded, [('rc0.2', 'rc0.2')])
-        # Withdrawing listed packages returns hosts to the newest one still listed.
+        self.assertEqual(self.check(ext), ('', '')); self.assertEqual(self.launch().state, 'ready'); self.assertEqual(self.loaded, [('rc0.2', 'rc0.2')])
+        # Withdrawing listed packages offers the newest one still listed.
         self.withdraw('rc0.2'); self.withdraw('rc0.3')
-        self.assertTrue(self.check(self.launch()))
+        ext = self.launch(); self.assertEqual(self.check(ext), ('available', 'rc0.1')); self.upgrade(ext)
         self.launch(); self.assertEqual(self.loaded, [('rc0.1', 'rc0.1')])
 
     def test_a_broken_first_package_is_never_picked_again(self):
@@ -142,7 +153,7 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual((ext.state, ext.version, self.loaded), ('ready', 'rc0.1', [('rc0.1', 'rc0.1')]))
 
     def test_failed_or_mismatched_updates_keep_the_package_in_use(self):
-        self.release('rc0.1', module_zip('rc0.1')); ext = self.launch(); first = self.rows[0]
+        self.release('rc0.1', module_zip('rc0.1')); self.launch(); first = self.rows[0]
         raw = module_zip('rc0.2')
         cases = [dict(sha256='0'*64),                                     # Damaged or replaced file.
                  dict(version='rc0.3'),                                   # Package names another version.
@@ -151,11 +162,14 @@ class UpdateTests(unittest.TestCase):
             with self.subTest(changes=changes):
                 self.rows = [first]
                 package = changes.pop('raw', raw)
-                self.release(changes.pop('version', 'rc0.2'), package, **changes)
-                self.assertFalse(self.check(ext)); self.assertEqual(self.record()['active'], dict(first, release='modules'))
+                entry = self.release(changes.pop('version', 'rc0.2'), package, **changes)
+                ext = self.launch(); self.assertEqual(self.check(ext), ('available', entry['version']))
+                ext.upgrade(); settle(ext)
+                self.assertEqual((ext.updateState, self.restarts), ('failed', []))
+                self.assertEqual(self.record()['active'], dict(first, release='modules'))
         self.rows = [first]; self.release('rc0.4', module_zip('rc0.4', api=MODULE_API + 1), api=MODULE_API + 1)
         self.release('rc0.0.9', module_zip('rc0.0.9'))  # Older than the package in use, which is still listed.
-        self.assertFalse(self.check(ext)); self.assertEqual(self.record()['active'], dict(first, release='modules'))
+        ext = self.launch(); self.assertEqual(self.check(ext), ('', '')); self.assertEqual(self.record()['active'], dict(first, release='modules'))
         self.launch(); self.assertEqual(self.loaded, [('rc0.1', 'rc0.1')])
 
     def test_packages_installed_for_the_earlier_interface_are_replaced(self):
@@ -170,9 +184,9 @@ class UpdateTests(unittest.TestCase):
     def test_unreachable_or_invalid_index_changes_nothing(self):
         self.release('rc0.1', module_zip('rc0.1')); ext = self.launch(); installed = self.record()
         self.publish('RIO-Modules.json', b'{not json')
-        self.assertFalse(self.check(ext)); self.assertEqual(self.record(), installed)
+        self.assertEqual(self.check(ext), ('', '')); self.assertEqual(self.record(), installed)
         with patch.object(extensions, 'fetch_index', side_effect=OSError('offline')):
-            self.assertFalse(self.check(ext))
+            self.assertEqual(self.check(ext), ('', ''))
         self.assertEqual(self.record(), installed)
 
     def test_the_card_checks_and_upgrades_its_own_module(self):
@@ -188,10 +202,10 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual((ext.updateState, ext.newVersion, ext.version, self.restarts), ('installed', 'rc0.2', 'rc0.1', [True]))
         self.assertEqual((self.record()['active']['version'], self.loaded), ('rc0.2', [('rc0.1', 'rc0.1')]))
         ext.checkUpdate(); self.assertEqual(ext.updateState, 'installed')  # Waits for the restart.
-        self.assertFalse(self.check(ext))  # The updater finds it installed too.
+        self.assertEqual(self.check(ext), ('installed', 'rc0.2'))  # The updater's check does not offer it again.
         ext = self.launch(); self.assertEqual((ext.version, self.loaded), ('rc0.2', [('rc0.2', 'rc0.2')]))
-        # A check that finds the updater's install already in place says so instead of offering it again.
-        self.release('rc0.3', module_zip('rc0.3')); ext.store.update(json.loads((self.tmp/'release/modules/RIO-Modules.json').read_text()))
+        # A check that finds a newer package already installed for the next start says so instead of offering it again.
+        self.release('rc0.3', module_zip('rc0.3')); ext.store.install(entry=ext.store.refresh())
         ext.checkUpdate(); settle(ext); self.assertEqual((ext.updateState, ext.newVersion), ('installed', 'rc0.3'))
 
     def test_the_card_reports_failures_and_keeps_the_package_in_use(self):
@@ -213,10 +227,13 @@ class UpdateTests(unittest.TestCase):
                                set_on=lambda value: None, open_window=lambda: None)
         source.start(); self.assertEqual((source.state, source.version, source.updatable), ('ready', 'rc0.1', False))
         source.checkUpdate(); self.assertEqual((source.updateState, source.checker), ('', None))
+        update_modules({'demo': source}); source.poll(); self.assertEqual(source.updateState, '')
         self.release('rc0.1', module_zip('rc0.1')); self.launch()
         capture = Extension(ModuleStore('demo', self.tmp/'modules', self.manifest, self.tmp/'host'), is_on=lambda: True, load=lambda assets: None,
                             set_on=lambda value: None, open_window=lambda: None, allow_download=False)
         capture.start(); self.assertEqual((capture.state, capture.updatable), ('ready', False))
+        self.release('rc0.2', module_zip('rc0.2')); update_modules({'demo': capture}); capture.poll()
+        self.assertEqual((capture.updateState, self.record()['active']['version']), ('', 'rc0.1'))
 
 
 @unittest.skipUnless(MODULE_SOURCES, 'Module sources are private')
