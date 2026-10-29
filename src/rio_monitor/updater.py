@@ -125,7 +125,7 @@ class AutoUpdater:
             self.worker=threading.Thread(target=self.run,daemon=True,name='RIO-update');self.worker.start()
     def run(self):
         self.program()
-        # A new program brings its own module packages, so modules update only while the program is current.
+        # A staged program restarts RIO anyway; it reads the module index for its own interface after that.
         if self.modules and not self.pending and not self.stop.is_set():
             try:
                 if self.modules(self.stop):self.restart=True

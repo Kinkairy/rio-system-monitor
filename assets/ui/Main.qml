@@ -56,16 +56,14 @@ Rio.PanelWindow {
    ExtensionCard {
     id: fangcunCard
     objectName: "fangcunExtension"; heading: win.tr("Fangcun","方寸山")
-    detail: win.extensionDetail(fangcunExt,win.tr("Cultivation mode on","修仙模式已开启"),win.tr("Cultivation mode off","修仙模式未开启"))
-    progress: fangcunExt.state==="downloading" ? fangcunExt.progress : -1; failed: fangcunExt.state==="error"
+    ext: fangcunExt; detail: win.extensionDetail(fangcunExt,win.tr("Cultivation mode on","修仙模式已开启"),win.tr("Cultivation mode off","修仙模式未开启"))
     accessory: RioSwitch { objectName: "cultivationSwitch"; checked: fangcunExt.enabled; enabled: !bridge.storageBusy; onToggled: { fangcunExt.setEnabled(checked); checked=Qt.binding(function(){return fangcunExt.enabled}) } }
     ActionButton { objectName: "fangcunOpenButton"; width: fangcunCard.actionWidth; height: 34; text: win.tr("Open settings","打开设置"); enabled: fangcunExt.enabled && fangcunExt.state==="ready"; onClicked: fangcunExt.open() }
    }
    ExtensionCard {
     id: blacksharkCard
     objectName: "blacksharkExtension"; heading: win.tr("Fengshen Pro","风神 Pro")
-    detail: win.extensionDetail(blacksharkExt,win.tr("Cooler control on","散热器控制已开启"),win.tr("Cooler control off","散热器控制未开启"))
-    progress: blacksharkExt.state==="downloading" ? blacksharkExt.progress : -1; failed: blacksharkExt.state==="error"
+    ext: blacksharkExt; detail: win.extensionDetail(blacksharkExt,win.tr("Cooler control on","散热器控制已开启"),win.tr("Cooler control off","散热器控制未开启"))
     accessory: RioSwitch { objectName: "blacksharkSwitch"; checked: blacksharkExt.enabled; onToggled: { blacksharkExt.setEnabled(checked); checked=Qt.binding(function(){return blacksharkExt.enabled}) } }
     ActionButton { objectName: "blacksharkOpenButton"; width: blacksharkCard.actionWidth; height: 34; text: win.tr("Open settings","打开设置"); enabled: blacksharkExt.enabled && blacksharkExt.state==="ready"; onClicked: blacksharkExt.open() }
    }
@@ -124,33 +122,60 @@ Rio.PanelWindow {
   ActionButton { objectName: "saveButton"; visible: win.tab===0; x: 310; y: 649; width: 90; height: 34; text: win.tr("Save","保存"); fill: "#a7eb52"; ink: "#17210f"; onClicked: bridge.saveAndHide() }
   }
 
- // Status line shared by every extension card: download state first, then the module's own mode.
+ // Status line shared by every extension card: download state first, then a module update, then the module's own mode.
  function extensionDetail(ext,on,off){
-  if(ext.state==="missing") return tr("Not downloaded · ","未下载 · 开启后下载 · ")+ext.downloadSize
+  if(ext.state==="missing") return tr("Not downloaded","未下载 · 开启后下载")+(ext.downloadSize ? " · "+ext.downloadSize : "")
   if(ext.state==="downloading") return tr("Downloading ","正在下载 ")+Math.round(ext.progress*100)+"%"
   if(ext.state==="error") return tr("Download failed · Switch on to retry","下载失败 · 重新开启可重试")
+  if(ext.updateState==="checking") return tr("Checking for updates…","正在检查更新…")
+  if(ext.updateState==="latest") return tr("Up to date","已是最新版本")
+  if(ext.updateState==="available") return tr("New version ","发现新版本 ")+ext.newVersion
+  if(ext.updateState==="upgrading") return tr("Updating ","正在升级 ")+Math.round(ext.progress*100)+"%"
+  if(ext.updateState==="installed") return tr("Updated to "+ext.newVersion+" · Applies after restart","已升级到 "+ext.newVersion+" · 重启后生效")
+  if(ext.updateState==="failed") return tr("Update failed · Try again later","更新失败 · 稍后再试")
   return ext.enabled ? on : off
  }
- // One card per extension: name, status line, optional mode switch, actions.
+ // One card per extension: name and module version, status line, optional mode switch, actions and the update button.
  component ExtensionCard: Item {
   default property alias actions: actionRow.data
   property alias accessory: accessorySlot.data
   property alias actionWidth: actionRow.width
+  property var ext: null
   property string heading: ""
   property string detail: ""
-  property real progress: -1
-  property bool failed: false
+  property real progress: ext && (ext.state==="downloading" || ext.updateState==="upgrading") ? ext.progress : -1
+  property bool failed: ext !== null && (ext.state==="error" || ext.updateState==="failed")
   Layout.fillWidth: true; implicitHeight: 108
   FieldSurface { anchors.fill: parent }
   Column { x: 14; y: 12; width: parent.width-84; spacing: 3
-   RioText { text: heading; color: "#edf0f2"; font.pixelSize: 15 }
+   Row { id: titleRow; spacing: 6
+    RioText { id: headingText; text: heading; color: "#edf0f2"; font.pixelSize: 15 }
+    RioText { objectName: "moduleVersion"; anchors.baseline: headingText.baseline; text: ext ? ext.version : ""; color: "#89979f"; font.pixelSize: 10 }
+   }
    RioText { width: parent.width; text: detail; color: failed ? "#eb7070" : "#89979f"; font.pixelSize: 10; elide: Text.ElideRight }
   }
-  Rectangle { objectName: "downloadTrack"; visible: progress>=0; x: 14; y: 53; width: parent.width-28; height: 4; radius: 2; color: "#303a3b"
+  // Download and upgrade progress share the title line, between the version and the switch.
+  Rectangle { objectName: "downloadTrack"; visible: progress>=0; x: 14+titleRow.width+12; y: 12+headingText.height/2-2
+   width: Math.max(0,accessorySlot.x-12-x); height: 4; radius: 2; color: "#303a3b"
    Rectangle { width: parent.width*Math.max(0,Math.min(1,progress)); height: 4; radius: 2; color: "#a7eb52" }
   }
   Item { id: accessorySlot; x: parent.width-56; y: 14; width: 42; height: 24 }
-  Row { id: actionRow; x: 14; y: parent.height-48; width: parent.width-28; height: 34; spacing: 8 }
+  Row { id: actionRow; x: 14; y: parent.height-48; width: parent.width-28-(updateButton.visible ? 46 : 0); height: 34; spacing: 8 }
+  // One button per module: ↻ checks the module index, ↑ installs the version found, ✓ when nothing is left to do.
+  RefreshButton {
+   id: updateButton; objectName: "moduleUpdateButton"; x: parent.width-52; y: parent.height-48; height: 34
+   readonly property string mode: ext ? ext.updateState : ""
+   readonly property bool busy: mode==="checking" || mode==="upgrading"
+   property real turn: 0
+   visible: ext !== null && ext.updatable; enabled: !busy && mode!=="installed"
+   text: mode==="available" ? "↑" : mode==="latest" || mode==="installed" ? "✓" : "↻"
+   fill: mode==="available" ? "#a7eb52" : "#24282b"; ink: mode==="available" ? "#17210f" : "#a7eb52"
+   Accessible.name: ToolTip.text; ToolTip.visible: hovered
+   ToolTip.text: mode==="available" ? win.tr("Update to ","升级到 ")+ext.newVersion : win.tr("Check for updates","检查更新")
+   onClicked: mode==="available" ? ext.upgrade() : ext.checkUpdate()
+   NumberAnimation on turn { from: 0; to: 360; duration: 900; loops: Animation.Infinite; running: updateButton.busy && updateButton.visible }
+   Binding { target: updateButton.contentItem; property: "rotation"; value: updateButton.busy ? updateButton.turn : 0 }
+  }
  }
  DialogPopup {
   id: musicPopup; objectName: "musicPopup"; height: 410

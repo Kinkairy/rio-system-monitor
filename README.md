@@ -4,10 +4,17 @@
 
 ## 当前版本与目录
 
-当前版本为 **rc0.1.17**，可从 [GitHub Release](https://github.com/Kinkairy/rio-system-monitor/releases/tag/rc0.1.17) 下载完整程序。保留 `rc0.1` 标签作为原有基准。本版继承减少托盘无用绘制、缩小温度环缓存和释放已拆分图集的 CPU/内存优化；结果与验证边界见[性能说明](docs/performance.md)。源码入口支持 `python launch.py --version`，托盘提示仅显示 RIO System Monitor。
+当前版本为 **rc0.1.18**，可从 [GitHub Release](https://github.com/Kinkairy/rio-system-monitor/releases/tag/rc0.1.18) 下载完整程序。保留 `rc0.1` 标签作为原有基准。本版继承减少托盘无用绘制、缩小温度环缓存和释放已拆分图集的 CPU/内存优化；结果与验证边界见[性能说明](docs/performance.md)。源码入口支持 `python launch.py --version`，托盘提示仅显示 RIO System Monitor。
 
 当前版本包含歌词修正：移除不稳定的 QQ 桌面搜索，兼容歌手显示别名；先查播放器自身接口，获取不到再并发查询其他 QQ/网易云/酷狗/LRCLIB 接口，先取得有效同步歌词的先显示。歌名区域缩为居中的 240px，超出后往返滚动，避免遮住侧边仪表。`rc0.1` 标签保留为原有基准。修正与验证记录见[音乐模式说明](docs/music-mode.md#fix-20261023-qq-lyrics-failed-online-lyric-lookup)。
 
+
+### rc0.1.18 更新
+
+- 设置「扩展」页的每个模块名旁显示模块自己的版本。「打开设置」右侧有一个图标按钮：↻ 检查这一个模块的更新，有新版时变成 ↑，再点即升级；装好后在 RIO 空闲时重启生效。自动更新照旧。
+- 模块与主程序彻底分开：方寸山、风神 Pro 各自编号（现在都是 rc0.1），程序本体不再附带模块包，第一次开启和以后升级都只从模块发布处下载，校验 SHA-256 后启用（见下文「扩展模块按需下载」「模块单独更新」）。
+- 从 rc0.1.17 升级后，开着的模块会重新下载一次 rc0.1（方寸山约 130 MB）。
+- 主程序其他功能不变。
 
 ### rc0.1.17 更新
 
@@ -204,24 +211,28 @@ spec 会自动调用 `tools/prepare_fixed_layers.py`，复用现有绘制代码�
 
 ### 扩展模块按需下载
 
-方寸山（`rio_fangcun`）和风神 Pro（`rio_blackshark`）不打进 EXE。spec 在生成 `build/runtime-assets/` 后调用 `tools/package_modules.py`：每个模块的代码、QML 和它自己的运行资源打成 `dist/RIO-Module-Fangcun.zip`、`dist/RIO-Module-BlackShark.zip`，并从 EXE 的运行资源中移出；包内固定排序与时间，同一输入得到同一 SHA-256。各包大小与 SHA-256 写入随 EXE 的 `assets/modules.json`。模块包只含合并后的运行资源，不含原图、分层输入或来源记录；与 EXE 一样，美术原文件留在私有仓库，公开源码树仍由 `tools/check_source_only.py` 限定。spec 仍分析模块代码以收集它们依赖的库，再从 EXE 中去掉模块代码本身。
+方寸山（`rio_fangcun`）和风神 Pro（`rio_blackshark`）不打进 EXE，也不随主程序发布：两个模块各自编号、各自发布到 `modules` Release（见下节）。spec 在生成 `build/runtime-assets/` 后调用 `tools/package_modules.py` 的 `package()`，把模块的运行资源从 EXE 的运行资源中移出，并在随 EXE 的 `assets/modules.json` 里只写明本程序承载的模块和宿主接口版本（`{"version":…,"api":2,"modules":["fangcun","blackshark"]}`），不含任何模块包或哈希。spec 仍分析模块代码以收集它们依赖的库，再从 EXE 中去掉模块代码本身。
 
-发布时把两个模块包与 `RIO-System-Monitor.exe` 一起作为同一版本 Release 的附件，并写入 `SHA256SUMS.txt`；附件名不随版本改变。程序在设置「扩展」中开启模块、而本机还没有对应包时，从 `https://github.com/Kinkairy/rio-system-monitor/releases/download/<当前版本>/<包名>` 下载，校验大小和 SHA-256 后解压到 `%LOCALAPPDATA%/RIO-Monitor/modules/<模块>/<哈希前缀>/` 再加载；新版本装好后只保留正在用的和上一版两个目录。设置中已开启但包缺失（例如升级后首次启动）会自动下载。下载中关掉开关即取消，失败可重新开启重试，只有就绪后才能打开模块窗口。源码运行时模块直接从 `src/` 导入，不走下载；截图和采集模式不联网。显式命令 `RIO --blackshark` 使用已下载的风神 Pro 包，需先在设置中开启一次。
+模块包由 `package_modules.py --release` 单独生成：模块的代码、QML 和它自己的合并运行资源打成 `RIO-Module-<Name>-<版本>.zip`，包内固定排序与时间，同一输入得到同一 SHA-256，包内 `module.json` 记录名称、包名、版本与 `api`。模块包只含合并后的运行资源，不含原图、分层输入或来源记录；美术原文件留在私有仓库，公开源码树仍由 `tools/check_source_only.py` 限定。
 
-实现及验证记录：私有根 README 的 `ROUND-SCREEN-MODULE-DOWNLOAD-20261027`。
+在设置「扩展」中开启模块、而本机还没有适合本程序接口的包时，程序先读模块清单，取本程序接口可用的最高版本，从 `https://github.com/Kinkairy/rio-system-monitor/releases/download/modules/<包名>` 下载，校验大小和 SHA-256 后解压到 `%LOCALAPPDATA%/RIO-Monitor/modules/<模块>/<哈希前缀>/` 再加载；只保留正在用的和上一版两个目录，旧接口的包在装新包时删除。设置中已开启但包缺失（例如主程序换到新接口后首次启动）会自动下载。下载中关掉开关即取消；清单读不到或下载失败时显示「下载失败」，可重新开启重试；只有就绪后才能打开模块窗口。源码运行时模块直接从 `src/` 导入，不走下载，也没有更新按钮；截图和采集模式不联网。显式命令 `RIO --blackshark` 使用已下载的风神 Pro 包，需先在设置中开启一次。
+
+实现及验证记录：私有根 README 的 `ROUND-SCREEN-MODULE-DOWNLOAD-20261027`、`ROUND-SCREEN-MODULE-VERSIONS-20261029`。
 
 ### 模块单独更新
 
-模块修复可以只发模块包，主程序不变。公开仓库有一个固定的预发布 Release `modules`（预发布不影响主程序更新读取的最新版），附件为清单 `RIO-Modules.json` 与带版本号的模块包 `RIO-Module-<Name>-<版本>.zip`。清单格式：`{"schema":1,"modules":{"blackshark":[{"version":"rc0.1.16.1","api":1,"asset":"RIO-Module-BlackShark-rc0.1.16.1.zip","size":…,"sha256":"…"}]}}`。模块更新的版本号为「主程序版本.序号」。
+模块与主程序分开发布、分开编号。公开仓库有一个固定的预发布 Release `modules`（预发布不影响主程序更新读取的最新版），附件为清单 `RIO-Modules.json` 与带版本号的模块包 `RIO-Module-<Name>-<版本>.zip`。清单格式：`{"schema":1,"modules":{"blackshark":[{"version":"rc0.1","api":2,"asset":"RIO-Module-BlackShark-rc0.1.zip","size":…,"sha256":"…"}]}}`。模块版本号是模块自己的 `__version__`（`src/rio_fangcun/__init__.py`、`src/rio_blackshark/__init__.py`），从 rc0.1 起，与主程序版本无关；每发一个新包先把它加一，已发布的版本号不再换内容。接口 1 的旧行（rc0.1.17.x 等，按「主程序版本.序号」编号）留在清单里，供 rc0.1.16–rc0.1.17 继续使用。
 
-- 兼容：`rio_monitor/extensions.py` 的 `MODULE_API` 是宿主给模块的接口版本，包括宿主适配器（`fangcun_host`、`blackshark_host`）、`Rio.UI` 共享组件及其属性、EXE 内的第三方库，以及宿主对模块入口的调用。这些有模块可能依赖的变化时把它加一，并发新主程序。`modules.json` 和包内 `module.json` 都记录 `api`；只有 `api` 相同、版本高于 EXE 自带包、且在本机没有加载失败过的更新才会被选用。主程序升级后，它自带的包高于以前所有模块更新。
-- 检查：与主程序更新同时进行（启动后 10 秒、之后每 6 小时），只在正式 EXE 中联网；有新程序待装时不检查模块。已装好的模块在旁边下载新版，按清单校验大小和 SHA-256，包内 `module.json` 的名称、包名、版本与 `api` 须与清单一致；当前选用记录在 `modules/<模块>/active.json`。装好后，在写屏、温度组件和风神写入都空闲时由现有更新脚本重启 RIO（不弹设置窗）；手动退出不会自动重开，下次启动即用新版。还没装的模块在第一次开启时直接装清单中最新的兼容版本。
-- 回退：清单读不到、下载或校验失败时保持现用版本；新版本加载失败会被记下不再选用，并立即改用上一版；从清单删掉某个版本后，下次检查会回到清单里最高的兼容版本或 EXE 自带包。
-- 安全：只加载 SHA-256 与 EXE 内 `modules.json` 或清单一致的包。清单只从固定地址 `https://github.com/Kinkairy/rio-system-monitor/releases/download/modules/RIO-Modules.json` 经 HTTPS 获取，包地址由程序用固定前缀加受限文件名拼出，不使用清单里的任何网址；只认 EXE 里固定的两个模块和包名。信任范围与主程序自动更新相同。
+- 兼容：`rio_monitor/extensions.py` 的 `MODULE_API` 是宿主给模块的接口版本，包括宿主适配器（`fangcun_host`、`blackshark_host`）、`Rio.UI` 共享组件及其属性、EXE 内的第三方库，以及宿主对模块入口的调用。这些有模块可能依赖的变化时把它加一。清单行和包内 `module.json` 都记录 `api`；只有 `api` 与本程序相同、且在本机没有加载失败过的包才会被选用，取其中版本最高的。接口 2 起模块单独编号、只从 `modules` Release 安装；rc0.1.17 及更早的程序（接口 1）看不到新编号的包。
+- 自动检查：与主程序更新同时进行（启动后 10 秒、之后每 6 小时），只在正式 EXE 中联网；有新程序待装时不检查模块。
+- 手动检查：扩展页每张卡片在模块名旁显示正在用的版本，「打开设置」右侧一个图标按钮：↻ 立即读清单检查这一个模块；有新版时按钮变成 ↑、状态行显示新版本号，再点即下载安装（进度条同首次下载）；装好显示 ✓ 与「已升级到 … · 重启后生效」，已是最新或失败的提示几秒后恢复成模块自己的状态。
+- 安装：两种方式都在旁边下载新版，按清单校验大小和 SHA-256，包内 `module.json` 的名称、包名、版本与 `api` 须与清单一致；当前选用记录在 `modules/<模块>/active.json`。装好后，在写屏、温度组件和风神写入都空闲时由现有更新脚本重启 RIO（不弹设置窗）；手动退出不会自动重开，下次启动即用新版。
+- 回退：清单读不到、下载或校验失败时保持现用版本；新版本加载失败会被记下不再选用，并立即改用上一版；从清单删掉某个版本后，下次检查会换到清单里剩下的最高兼容版本。
+- 安全：只加载 SHA-256 与清单一致的包。清单只从固定地址 `https://github.com/Kinkairy/rio-system-monitor/releases/download/modules/RIO-Modules.json` 经 HTTPS 获取，包地址由程序用固定前缀加受限文件名拼出，不使用清单里的任何网址；只认 EXE 列出的两个模块和包名。信任范围与主程序自动更新相同。
 
-发一个模块更新（每次上传须主人批准）：只改模块源码（及其运行资源），主程序与宿主接口不变；运行测试后执行 `python tools/package_modules.py build/runtime-assets dist --release blackshark rc0.1.16.1 --index <已发布的 RIO-Modules.json>`，生成 `dist/RIO-Module-BlackShark-rc0.1.16.1.zip` 与合并后的 `dist/RIO-Modules.json`；先上传模块包、最后上传清单到 `modules` Release（同名覆盖），再匿名下载两者核对哈希。方寸山更新须先运行 `prepare_fixed_layers` 生成其运行资源。rc0.1.15 及更早的程序没有这套机制，只能随主程序更新模块。
+发一个模块版本（每次上传须主人批准）：只改模块源码（及其运行资源），把该模块的 `__version__` 加一；运行测试后执行 `python tools/package_modules.py build/runtime-assets dist --release blackshark <新版本> --index <已发布的 RIO-Modules.json>`（版本须与 `__version__` 一致；同一版本号换了内容会被拒绝），生成 `dist/RIO-Module-BlackShark-<新版本>.zip` 与合并后的 `dist/RIO-Modules.json`；先上传模块包、最后上传清单到 `modules` Release（同名覆盖），再匿名下载两者核对哈希。方寸山须先运行 `prepare_fixed_layers` 生成其运行资源。`MODULE_API` 改变的主程序发布前，先把每个模块的新接口版本发到 `modules` Release，否则新程序开启模块时没有可下载的包。
 
-实现及验证记录：私有根 README 的 `ROUND-SCREEN-MODULE-UPDATES-20261028`。
+实现及验证记录：私有根 README 的 `ROUND-SCREEN-MODULE-UPDATES-20261028`、`ROUND-SCREEN-MODULE-VERSIONS-20261029`。
 
 ## 配置、安装与许可
 

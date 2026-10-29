@@ -57,16 +57,43 @@ def click(window, name):
 
 
 class Installed:
-    name, entry = 'demo', None
+    name, package, packaged, entry = 'demo', 'rio_entry_demo', True, None
     def location(self): return ASSETS
+    def current(self): return {'version': 'rc0.1', 'sha256': 'b'*64}
+    def refresh(self): return self.entry
 
 
 class Downloadable(Installed):
     entry = {'size': 58_000_000}
     def __init__(self): self.ready = False; self.gate = threading.Event()
     def location(self): return ASSETS if self.ready else None
+    def current(self): return Installed.current(self) if self.ready else None
     def install(self, stop, progress):
         progress(1, 4); self.gate.wait(5); self.ready = True
+
+
+class Updatable(Installed):
+    """An installed module whose index lists a newer package once read."""
+    def __init__(self): self.entry, self.installs = None, []
+    def refresh(self):
+        self.entry = dict(version='rc0.2', sha256='c'*64, size=45_000); return self.entry
+    def install(self, stop, progress, entry):
+        progress(1, 2); self.installs.append(entry['version'])
+
+
+def child(parent, name):
+    pending = [parent]
+    while pending:
+        current = pending.pop()
+        if current.objectName() == name: return current
+        pending.extend(current.childItems())
+
+
+def settle(ext):
+    for _ in range(200):
+        ext.poll()
+        if ext.checker is None: return
+        time.sleep(.01)
 
 
 def load_settings(bridge, fangcun_ext, blackshark_ext):
@@ -153,6 +180,35 @@ class ExtensionEntryTests(unittest.TestCase):
         QTest.qWait(20)
         assert loaded == [ASSETS] and fangcun.enabled and card.property('detail') == '修仙模式已开启'
         assert card.property('progress') == -1 and opener.property('enabled') and not card.property('failed')
+    finally:
+        window.hide(); engine.deleteLater(); app.processEvents()
+
+
+  def test_cards_show_module_versions_and_check_then_upgrade_each_module(self):
+    app, bridge = self.app, self.bridge
+    store, restarts = Updatable(), []
+    fangcun_ext = Extension(Installed(), is_on=lambda: False, load=lambda assets: None, set_on=lambda value: None, open_window=lambda: None)
+    blackshark_ext = Extension(store, is_on=lambda: False, load=lambda assets: None, set_on=lambda value: None, open_window=lambda: None,
+                               installed=lambda: restarts.append(True))
+    fangcun_ext.start(); blackshark_ext.start()
+    engine, window = load_settings(bridge, fangcun_ext, blackshark_ext)
+    try:
+        click(window, 'headerTab1')
+        fangcun_card, card = item(window, 'fangcunExtension'), item(window, 'blacksharkExtension')
+        assert child(fangcun_card, 'moduleVersion').property('text') == 'rc0.1' and child(card, 'moduleVersion').property('text') == 'rc0.1'
+        button, opener = child(card, 'moduleUpdateButton'), child(card, 'blacksharkOpenButton')
+        assert visible(button) and button.property('text') == '↻' and opener.property('width') == card.property('width')-28-46
+        assert card.property('detail') == '散热器控制未开启'
+        click(window, 'headerTab1'); point = button.mapToScene(button.boundingRect().center()).toPoint()
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point); settle(blackshark_ext); QTest.qWait(20)
+        assert card.property('detail') == '发现新版本 rc0.2' and button.property('text') == '↑' and visible(button)
+        assert child(card, 'moduleVersion').property('text') == 'rc0.1' and store.installs == []
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, point); settle(blackshark_ext); QTest.qWait(20)
+        assert store.installs == ['rc0.2'] and restarts == [True]
+        assert card.property('detail') == '已升级到 rc0.2 · 重启后生效' and button.property('text') == '✓' and not button.property('enabled')
+        assert child(card, 'moduleVersion').property('text') == 'rc0.1'  # The running package until RIO restarts.
+        # The other card is untouched by this module's update.
+        assert child(fangcun_card, 'moduleUpdateButton').property('text') == '↻' and fangcun_card.property('detail') == '修仙模式未开启'
     finally:
         window.hide(); engine.deleteLater(); app.processEvents()
 

@@ -1,4 +1,4 @@
-"""Module packages: reproducible packing, pinned download, verified install and the card state machine."""
+"""Module packages: reproducible packing, a host-only EXE, verified install from the index and the card state machine."""
 import os
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from pathlib import Path
@@ -33,52 +33,58 @@ class TemporaryTest(unittest.TestCase):
         folder = tempfile.TemporaryDirectory(); self.addCleanup(folder.cleanup); self.tmp = Path(folder.name)
 
     def release(self):
-        folder = runtime(self.tmp)
-        manifest = package_modules.package(ROOT/'src', folder, self.tmp/'dist', 'rc9.9.9')
+        """Both modules released to a simulated 'modules' prerelease; returns the index and the EXE's manifest."""
+        index = None
+        for name in package_modules.MODULES:
+            data = package_modules.release(ROOT/'src', runtime(self.tmp/name), self.tmp/'dist', name, package_modules.module_version(ROOT/'src', name), index=index)
+            index = self.tmp/'dist/RIO-Modules.json'
         url = patch.object(extensions, 'RELEASE_URL', (self.tmp/'dist').as_uri() + '/{asset}'); url.start(); self.addCleanup(url.stop)
-        return folder, manifest
+        return data, {'version': 'rc9.9.9', 'api': extensions.MODULE_API, 'modules': list(package_modules.MODULES)}
 
 
 @unittest.skipUnless(MODULE_SOURCES, 'Module sources are private')
 class PackageTests(TemporaryTest):
     def test_packages_are_reproducible_and_carry_only_merged_runtime_resources(self):
-        folder, dist = runtime(self.tmp), self.tmp/'dist'
-        manifest = package_modules.package(ROOT/'src', folder, dist, 'rc9.9.9')
-        raw = (dist/'RIO-Module-Fangcun.zip').read_bytes()
-        self.assertEqual(manifest['modules']['fangcun'], dict(asset='RIO-Module-Fangcun.zip', size=len(raw), sha256=hashlib.sha256(raw).hexdigest(), api=extensions.MODULE_API))
-        self.assertEqual(json.loads(zipfile.ZipFile(io.BytesIO(raw)).read('module.json')), dict(name='fangcun', package='rio_fangcun', version='rc9.9.9', api=extensions.MODULE_API))
+        folder = runtime(self.tmp)
+        raw = package_modules.build(ROOT/'src', folder, 'fangcun', 'rc0.1')
+        self.assertEqual(raw, package_modules.build(ROOT/'src', runtime(self.tmp/'again'), 'fangcun', 'rc0.1'))
+        self.assertEqual(json.loads(zipfile.ZipFile(io.BytesIO(raw)).read('module.json')), dict(name='fangcun', package='rio_fangcun', version='rc0.1', api=extensions.MODULE_API))
         names = zipfile.ZipFile(io.BytesIO(raw)).namelist()
         self.assertTrue({'module.json','rio_fangcun/module.py','rio_fangcun/ui/FangcunWindow.qml'} <= set(names))
         self.assertTrue({'assets/fangcun/runtime.mjs','assets/fangcun-ui/inventory-v1.png','assets/fangcun-gourd-v4.png'} <= set(names))
         self.assertFalse([n for n in names if n.endswith('.provenance.json') or 'fangcun-gourd.png' in n or '-v2.png' in n or '__pycache__' in n])
-        shark = zipfile.ZipFile(dist/'RIO-Module-BlackShark.zip').namelist()
+        shark = zipfile.ZipFile(io.BytesIO(package_modules.build(ROOT/'src', folder, 'blackshark', 'rc0.1'))).namelist()
         self.assertIn('rio_blackshark/ui/BlackSharkWindow.qml', shark); self.assertFalse([n for n in shark if n.startswith('assets/')])
-        # The EXE input keeps host resources only, and its manifests agree.
+
+    def test_the_exe_keeps_host_resources_and_lists_its_modules_without_packages(self):
+        folder = runtime(self.tmp)
+        manifest = package_modules.package(folder, 'rc9.9.9')
+        self.assertEqual(manifest, {'version': 'rc9.9.9', 'api': extensions.MODULE_API, 'modules': ['fangcun', 'blackshark']})
         self.assertEqual(sorted(p.name for p in folder.iterdir()), ['modules.json','private-manifest.json','rio-icon.ico'])
         self.assertEqual(json.loads((folder/'private-manifest.json').read_text())['files'], [{'path':'rio-icon.ico'}])
         self.assertEqual(json.loads((folder/'modules.json').read_text()), manifest)
-        again = package_modules.package(ROOT/'src', runtime(self.tmp/'again'), self.tmp/'again-dist', 'rc9.9.9')
-        self.assertEqual(again, manifest)
+        self.assertFalse((self.tmp/'dist').exists())  # No module package is built with the program.
 
     def test_install_verifies_extracts_and_replaces_older_versions(self):
-        _, manifest = self.release()
-        store = ModuleStore('fangcun', self.tmp/'modules', manifest, self.tmp/'host', version='rc9.9.9')
+        index, manifest = self.release()
+        store = ModuleStore('fangcun', self.tmp/'modules', manifest, self.tmp/'host')
         self.assertIsNone(store.location())
+        entry = store.refresh(index)
         old = self.tmp/'modules/fangcun/0000000000000000'; old.mkdir(parents=True)
         seen = []
         store.install(progress=lambda done,total: seen.append((done,total)))
-        target = self.tmp/'modules/fangcun'/manifest['modules']['fangcun']['sha256'][:16]
+        target = self.tmp/'modules/fangcun'/entry['sha256'][:16]
         self.addCleanup(lambda: str(target) in sys.path and sys.path.remove(str(target)))
         self.assertEqual(store.location(), target/'assets'); self.assertIn(str(target), sys.path)
         self.assertTrue((target/'assets/fangcun/runtime.mjs').is_file()); self.assertFalse(old.exists())
-        self.assertEqual(seen[-1], (manifest['modules']['fangcun']['size'],)*2)
+        self.assertEqual(seen[-1], (entry['size'],)*2)
         self.assertFalse(list((self.tmp/'modules/fangcun/downloads').iterdir()))
 
     def test_damaged_packages_are_never_installed(self):
-        _, manifest = self.release()
-        entry = manifest['modules']['blackshark']
-        (self.tmp/'dist'/entry['asset']).write_bytes(b'x'*entry['size'])
+        index, manifest = self.release()
         store = ModuleStore('blackshark', self.tmp/'modules', manifest, self.tmp/'host')
+        entry = store.refresh(index)
+        (self.tmp/'dist'/entry['asset']).write_bytes(b'x'*entry['size'])
         with self.assertRaisesRegex(ValueError, 'damaged'): store.install()
         self.assertIsNone(store.location())
 
@@ -89,10 +95,12 @@ class StoreTests(TemporaryTest):
         with zipfile.ZipFile(data,'w') as archive: archive.writestr('../outside.py','')
         raw = data.getvalue(); (self.tmp/'evil.zip').write_bytes(raw)
         url = patch.object(extensions, 'RELEASE_URL', self.tmp.as_uri() + '/{asset}'); url.start(); self.addCleanup(url.stop)
-        evil = {'modules': {'blackshark': dict(asset='evil.zip', size=len(raw), sha256=hashlib.sha256(raw).hexdigest())}}
-        with self.assertRaisesRegex(ValueError, 'Unexpected'): ModuleStore('blackshark', self.tmp/'modules', evil, self.tmp/'host').install()
+        store = ModuleStore('blackshark', self.tmp/'modules', {'modules': ['blackshark']}, self.tmp/'host')
+        evil = dict(asset='evil.zip', size=len(raw), sha256=hashlib.sha256(raw).hexdigest(), version='rc0.1', api=extensions.MODULE_API, release='modules')
+        with self.assertRaisesRegex(ValueError, 'Unexpected'): store.install(entry=evil)
         self.assertFalse((self.tmp/'modules/outside.py').exists())
-        self.assertIsNone(ModuleStore('blackshark', self.tmp/'modules', evil, self.tmp/'host').location())
+        self.assertIsNone(store.location())
+        with self.assertRaisesRegex(LookupError, 'listed'): store.install()  # Nothing listed, nothing to install.
 
     @unittest.skipUnless(MODULE_SOURCES, 'Module sources are private')
     def test_source_runs_use_src_modules_without_downloading(self):
@@ -100,10 +108,13 @@ class StoreTests(TemporaryTest):
 
 
 class Store:
-    def __init__(self, entry=True, ready=False):
-        self.name='demo'; self.entry={'size':58_000_000} if entry else None; self.ready=ready
-        self.gate=threading.Event(); self.fail=False; self.installs=0
+    def __init__(self, packaged=True, ready=False):
+        self.name, self.package, self.packaged = 'demo', 'rio_store_demo', packaged
+        self.entry={'size':58_000_000}; self.ready=ready
+        self.gate=threading.Event(); self.fail=False; self.installs=0; self.refreshes=0
     def location(self): return Path('module-assets') if self.ready else None
+    def current(self): return None
+    def refresh(self): self.refreshes+=1; return self.entry
     def reject(self): return False
     def install(self, stop, progress):
         self.installs+=1; progress(29,58)
@@ -143,7 +154,7 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertEqual(ext.state, 'ready'); self.assertTrue(ext.enabled)
         self.assertEqual(calls, [('load',Path('module-assets')),('set_on',True)])
         ext.open(); ext.setEnabled(False)
-        self.assertEqual(calls[-2:], [('open',),('set_on',False)]); self.assertFalse(ext.enabled); self.assertEqual(store.installs, 1)
+        self.assertEqual(calls[-2:], [('open',),('set_on',False)]); self.assertFalse(ext.enabled); self.assertEqual((store.installs, store.refreshes), (1, 1))
 
     def test_switching_off_cancels_and_failure_can_be_retried(self):
         store=Store(); ext,calls,_=card(store)
@@ -163,10 +174,10 @@ class ExtensionStateTests(unittest.TestCase):
         idle,_,_=card(Store()); idle.start(); self.assertEqual(idle.state, 'missing')
         small=Store(); small.entry={'size':45_291}; self.assertEqual(card(small)[0].downloadSize, '45 KB')
 
-    def test_capture_and_unpinned_builds_never_download(self):
+    def test_capture_and_source_builds_never_download(self):
         offline,_,_=card(Store(),on=True,allow_download=False); offline.start(); self.assertEqual(offline.state, 'missing')
         offline.setEnabled(True); self.assertEqual(offline.state, 'error'); self.assertIsNone(offline.worker)
-        unpinned,_,_=card(Store(entry=False)); unpinned.setEnabled(True); self.assertEqual(unpinned.state, 'error')
+        source,_,_=card(Store(packaged=False)); source.setEnabled(True); self.assertEqual(source.state, 'error')
 
     def test_shutdown_stops_a_running_download(self):
         store=Store(); ext,_,_=card(store); ext.setEnabled(True)

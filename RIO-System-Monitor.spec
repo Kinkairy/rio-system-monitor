@@ -16,8 +16,8 @@ from package_modules import MODULES,package as package_modules
 runtime_assets=prepare(root/'assets',root/'build/runtime-assets')
 sys.path.insert(0,str(root/'src'))
 from rio_monitor import __version__
-# Extension modules become dist/RIO-Module-*.zip Release attachments pinned in assets/modules.json.
-package_modules(root/'src',runtime_assets,root/'dist',__version__)
+# Extension modules leave the EXE; assets/modules.json lists them and each is released apart (package_modules.py --release).
+package_modules(runtime_assets,__version__)
 module_packages=[spec['package'] for spec in MODULES.values()]
 a=Analysis([str(root/'launch.py')],pathex=[str(root/'src')],binaries=music_binaries,datas=[(str(runtime_assets),'assets'),(str(root/'docs/third-party'),'licenses'),(str(root/'THIRD-PARTY-NOTICES.md'),'licenses'),(str(root/'docs/distribution-licenses.md'),'licenses'),(str(root/'LICENSE'),'licenses/RIO')],hiddenimports=music_imports+module_packages,hookspath=[],hooksconfig={},runtime_hooks=[],excludes=['tkinter','PIL.AvifImagePlugin','PIL._avif'],noarchive=False)
 # Analysing the modules keeps their dependencies in the EXE; their own code ships only in the packages.

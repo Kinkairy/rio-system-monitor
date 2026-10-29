@@ -361,7 +361,7 @@ def main():
  app=QApplication(sys.argv);app.setQuitOnLastWindowClosed(False);app.setApplicationName('RIO System Monitor');app.setApplicationVersion(__version__);app.setFont(QFont('Segoe UI',10))
  assets=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'assets';app.setWindowIcon(QIcon(str(assets/'rio-icon.ico')))
  from .updater import AutoUpdater
- # Module-only updates are checked with the program's; bridge is bound below, before the first check runs.
+ # Module updates are checked after the program's; bridge is bound below, before the first check runs.
  updater=AutoUpdater(config_path().parent/'updates',modules=lambda stop:update_modules(bridge.extensions,stop)) if getattr(sys,'frozen',False) and not capture_mode and not args.self_test else None
  settings=Settings(weather_mode='off',language='zh',game_enabled=False) if capture_mode else load();weather=WeatherWorker(settings);provider=Frames();monitor=TemperatureComponent(assets,settings.temperature_monitor,start=not capture_mode);session=DisplaySession(settings.display_mode);storage=StorageJob(session,assets,cache_dir=None if capture_mode else config_path().parent/'screen-content');music=Music(config_path().parent/'lyrics',settings.music_enabled,settings.music_online_lyrics,settings.music_source,start=not capture_mode);bridge=Bridge(app,settings,weather,provider,capture_mode,monitor=monitor,storage=storage,music=music,updater=updater)
  engine=QQmlApplicationEngine();install_ui(engine,assets);bridge.ui_engine=engine;game_provider=Frames()
@@ -374,10 +374,11 @@ def main():
   import rio_blackshark  # Importing at load lets a broken module update fall back to the package before it.
   bridge.resumeBlackShark()
  # Packaged builds download modules on demand; source runs import them from src/. Capture modes never download.
- manifest=read_manifest(assets);modules=config_path().parent/'modules'
+ # A module update installed from its settings card restarts RIO once idle, like the updater's own.
+ manifest=read_manifest(assets);modules=config_path().parent/'modules';installed=lambda:updater and setattr(updater,'restart',True)
  bridge.extensions=dict(
-  fangcun=Extension(ModuleStore('fangcun',modules,manifest,assets),is_on=lambda:bridge.s.game_enabled,load=load_fangcun,set_on=lambda value:bridge.game.setEnabled(value),open_window=lambda:bridge.game.openPanel(),allow_download=not capture_mode),
-  blackshark=Extension(ModuleStore('blackshark',modules,manifest,assets),is_on=lambda:bridge.s.blackshark_enabled,load=load_blackshark,set_on=bridge.setBlackSharkEnabled,open_window=bridge.openBlackShark,allow_download=not capture_mode))
+  fangcun=Extension(ModuleStore('fangcun',modules,manifest,assets),is_on=lambda:bridge.s.game_enabled,load=load_fangcun,set_on=lambda value:bridge.game.setEnabled(value),open_window=lambda:bridge.game.openPanel(),allow_download=not capture_mode,installed=installed),
+  blackshark=Extension(ModuleStore('blackshark',modules,manifest,assets),is_on=lambda:bridge.s.blackshark_enabled,load=load_blackshark,set_on=bridge.setBlackSharkEnabled,open_window=bridge.openBlackShark,allow_download=not capture_mode,installed=installed))
  if args.fangcun_capture:
   from .fangcun_capture import CaptureOutput
   session._enumerator=lambda:['offline-capture'];session._output_factory=CaptureOutput

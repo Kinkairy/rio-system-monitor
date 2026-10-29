@@ -1,5 +1,5 @@
-"""Downloadable extension modules: verified Release packages, loaded on demand and updated apart from the program."""
-import importlib.util, json, re, shutil, sys, threading, urllib.request, uuid, zipfile
+"""Downloadable extension modules: verified packages from the module Release, loaded on demand and updated apart from the program."""
+import importlib.util, json, re, shutil, sys, threading, time, urllib.request, uuid, zipfile
 from pathlib import Path, PurePosixPath
 from PySide6.QtCore import QObject, Signal, Property, Slot
 from . import __version__
@@ -8,10 +8,11 @@ from .updater import REPOSITORY, download_asset, version_key
 PACKAGES = {'fangcun': 'rio_fangcun', 'blackshark': 'rio_blackshark'}
 # Version of what modules use from the host: the host adapters, shared Rio.UI components and their properties,
 # libraries bundled in the EXE and the calls the host makes into a module. Raise it whenever a module could come to
-# depend on a change there; a module-only update installs only on hosts with the same value.
-MODULE_API = 1
+# depend on a change there; a module package installs only on hosts with the same value.
+# 2: modules carry their own version numbers (rc0.1 onward) and come only from the module Release, never the program's.
+MODULE_API = 2
 RELEASE_URL = 'https://github.com/' + REPOSITORY + '/releases/download/{version}/{asset}'
-# Module-only updates live in one prerelease, so releases/latest stays the program.
+# Module packages live in one prerelease, so releases/latest stays the program.
 UPDATES = 'modules'
 INDEX = 'RIO-Modules.json'
 UPDATE_ASSET = re.compile(r'RIO-Module-[A-Za-z]+-[0-9A-Za-z.]+\.zip')
@@ -48,26 +49,29 @@ def listed_updates(index, name):
 
 
 class ModuleStore:
-    """One module package: importable as source, or installed from the EXE's pinned download or a newer listed update."""
-    def __init__(self, name, root, manifest, host_assets, version=__version__):
+    """One module package: importable as source, or installed from the module index and updated there."""
+    def __init__(self, name, root, manifest, host_assets):
         self.name, self.package = name, PACKAGES[name]
         self.root, self.host_assets = Path(root) / name, Path(host_assets)
-        pinned, version = (manifest or {}).get('modules', {}).get(name), (manifest or {}).get('version', version)
-        # The EXE's own package is the baseline: always available from the program's Release and the last fallback.
-        self.pinned = pinned and dict(pinned, version=version, release=version)
-        self.listed = []  # Updates from the last index read; empty until a check succeeds.
+        # Packaged builds list the modules they host; their code is never in the EXE and comes only from the index.
+        self.packaged = name in (manifest or {}).get('modules', ())
+        self.listed = []  # Entries from the last index read; empty until a read succeeds.
+        self.lock = threading.Lock()  # The updater and the settings card may both install.
 
     @property
     def entry(self):
-        """The package to install: the newest of the pinned one and listed updates that never failed here."""
-        if self.pinned is None:
-            return None
+        """The package to install: the newest listed one that never failed here."""
         bad = self.record().get('bad', [])
-        newer = [e for e in self.listed if e['sha256'] not in bad and version_key(e['version']) > version_key(self.pinned['version'])]
-        return max([self.pinned] + newer, key=lambda e: version_key(e['version']))
+        usable = [e for e in self.listed if e['sha256'] not in bad]
+        return max(usable, key=lambda e: version_key(e['version'])) if usable else None
+
+    def refresh(self, index=None):
+        """Read this module's entries from the module index, fetched now unless given; returns the entry to install."""
+        self.listed = listed_updates(fetch_index() if index is None else index, self.name)
+        return self.entry
 
     def record(self):
-        """active.json: the package in use, the one before it and updates that failed to load here."""
+        """active.json: the package in use, the one before it and packages that failed to load here."""
         try:
             data = json.loads((self.root / 'active.json').read_text(encoding='utf-8'))
         except (OSError, ValueError):
@@ -78,23 +82,19 @@ class ModuleStore:
         path = self.root / 'active.json'; temp = path.with_suffix('.tmp')
         temp.write_text(json.dumps(record, indent=2), encoding='utf-8'); temp.replace(path)
 
-    def _installed(self, entry):
-        return isinstance(entry, dict) and isinstance(entry.get('sha256'), str) and (self.root / entry['sha256'][:16] / self.package / '__init__.py').is_file()
+    def _usable(self, entry, record):
+        """Installed, built for this host and never failed to load here."""
+        return (isinstance(entry, dict) and isinstance(entry.get('sha256'), str) and entry.get('api') == MODULE_API
+                and entry['sha256'] not in record.get('bad', []) and (self.root / entry['sha256'][:16] / self.package / '__init__.py').is_file())
 
     def current(self):
-        """The installed package to load: the recorded one while it suits this program, else the pinned one."""
-        if self.pinned is None:
-            return None
-        record = self.record(); active = record.get('active')
-        if self._installed(active) and active['sha256'] not in record.get('bad', []) and (
-                active['sha256'] == self.pinned['sha256']
-                or (active.get('api') == MODULE_API and version_key(active.get('version')) > version_key(self.pinned['version']))):
-            return active
-        return self.pinned if self._installed(self.pinned) else None
+        """The installed package to load, or None until one suiting this host is installed."""
+        record = self.record()
+        return record['active'] if self.packaged and self._usable(record.get('active'), record) else None
 
     def location(self):
         """Return the module's assets directory once its code can be imported, else None."""
-        if self.pinned is None:
+        if not self.packaged:
             return self.host_assets if importlib.util.find_spec(self.package) else None
         current = self.current()
         if current is None:
@@ -106,12 +106,18 @@ class ModuleStore:
 
     def install(self, stop=None, progress=None, entry=None):
         entry = entry or self.entry
+        if entry is None:
+            raise LookupError('No package of this module is listed for this program')
+        with self.lock:
+            self._install(entry, stop, progress)
+
+    def _install(self, entry, stop, progress):
         asset = dict(browser_download_url=RELEASE_URL.format(version=entry['release'], asset=entry['asset']),
                      digest='sha256:' + entry['sha256'], size=entry['size'], version=entry['version'], file=entry['asset'])
         archive = download_asset(asset, self.root / 'downloads', stop, progress)
         before, record = self.current(), self.record()
         target, staging = self.root / entry['sha256'][:16], self.root / ('.staging-' + uuid.uuid4().hex)
-        expected = dict(name=self.name, package=self.package, version=entry['version'], **({'api': entry['api']} if 'api' in entry else {}))
+        expected = dict(name=self.name, package=self.package, version=entry['version'], api=entry['api'])
         try:
             with zipfile.ZipFile(archive) as package:
                 for name in package.namelist():
@@ -129,16 +135,17 @@ class ModuleStore:
             shutil.rmtree(staging, ignore_errors=True)
             archive.unlink(missing_ok=True)
         previous = before if before and before['sha256'] != entry['sha256'] else record.get('previous')
+        previous = previous if self._usable(previous, record) and previous['sha256'] != entry['sha256'] else None
         self._save(active=entry, previous=previous, bad=record.get('bad', []))
-        # The package in use and the one before it stay for falling back; anything older is removed.
-        keep = {target, self.root / 'downloads'} | ({self.root / previous['sha256'][:16]} if self._installed(previous) else set())
+        # The package in use and the one before it stay for falling back; anything older, or for another host, is removed.
+        keep = {target, self.root / 'downloads'} | ({self.root / previous['sha256'][:16]} if previous else set())
         for old in self.root.iterdir():
             if old.is_dir() and old not in keep:
                 shutil.rmtree(old, ignore_errors=True)
 
     def update(self, index, stop=None):
         """Take the entries of a fresh index and install the chosen package beside the one in use; True once installed."""
-        self.listed = listed_updates(index, self.name)
+        self.refresh(index)
         current, entry = self.current(), self.entry
         if current is None or entry is None or entry['sha256'] == current['sha256']:
             return False
@@ -146,9 +153,9 @@ class ModuleStore:
         return True
 
     def reject(self):
-        """The package in use failed to load: never pick it again and unload it; False when only the pinned one is left."""
+        """The package in use failed to load: never pick it again and fall back to the one before it; False when none is left."""
         current = self.current()
-        if current is None or current['sha256'] == self.pinned['sha256']:
+        if current is None:
             return False
         record = self.record()
         self._save(active=record.get('previous'), previous=None, bad=sorted(set(record.get('bad', [])) | {current['sha256']}))
@@ -157,7 +164,7 @@ class ModuleStore:
             sys.path.remove(failed)
         for module in [m for m in sys.modules if m == self.package or m.startswith(self.package + '.')]:
             del sys.modules[module]
-        return True
+        return self.current() is not None
 
 
 def update_modules(extensions, stop=None):
@@ -169,10 +176,11 @@ def update_modules(extensions, stop=None):
     installed = False
     for ext in extensions.values():
         if ext.state != 'ready':
-            ext.store.listed = listed_updates(index, ext.store.name)  # Used when the module is first switched on.
+            ext.store.refresh(index)  # Shows the download size before the module is first switched on.
             continue
         try:
-            installed = ext.store.update(index, stop) or installed
+            if ext.store.update(index, stop):
+                installed, ext.staged = True, ext.store.current()  # The card shows it until the restart loads it.
         except Exception:
             pass  # A failed download or a mismatched package keeps the one in use.
     return installed
@@ -182,28 +190,44 @@ class Extension(QObject):
     """Settings card state for one module; the host supplies what loading and switching mean."""
     changed = Signal()
 
-    def __init__(self, store, *, is_on, load, set_on, open_window, allow_download=True):
+    def __init__(self, store, *, is_on, load, set_on, open_window, allow_download=True, installed=lambda: None):
         super().__init__()
         self.store, self.is_on, self.load, self.set_on, self.open_window = store, is_on, load, set_on, open_window
-        self.allow_download = allow_download
+        # installed() runs once an update is in place; it loads at the next start, which packaged hosts make once idle.
+        self.allow_download, self.installed = allow_download, installed
         self.assets = store.location()
         self._state = 'ready' if self.assets is not None else 'missing'
         self._progress, self.stop, self.worker, self.result, self.error = 0., threading.Event(), None, None, ''
+        # The card's own update check: what it shows, the version it offers or installed, and its worker's result.
+        # loaded is the package running now; staged is one the updater installed for the next start.
+        self.loaded, self.staged, self._update, self._offer = None, None, '', ''
+        self.checker, self.update_result, self.update_at = None, None, 0.
 
     def _size(self):
         size = (self.store.entry or {}).get('size', 0)
         return f'{size/1_000_000:.0f} MB' if size >= 1_000_000 else f'{max(1, round(size/1000))} KB' if size else ''
 
+    def _version(self):
+        """The module version in use; before the first download, the one that would be installed."""
+        if self._state != 'ready':
+            return (self.store.entry or {}).get('version', '')
+        return (self.loaded or {}).get('version') or getattr(sys.modules.get(self.store.package), '__version__', '')
+
     enabled = Property(bool, lambda self: self._state == 'downloading' or (self._state == 'ready' and self.is_on()), notify=changed)
     state = Property(str, lambda self: self._state, notify=changed)
     progress = Property(float, lambda self: self._progress, notify=changed)
     downloadSize = Property(str, _size, notify=changed)
+    version = Property(str, _version, notify=changed)
+    # '', checking, latest, available, upgrading, installed or failed; newVersion is the one offered or installed.
+    updateState = Property(str, lambda self: self._update, notify=changed)
+    newVersion = Property(str, lambda self: self._offer, notify=changed)
+    updatable = Property(bool, lambda self: self._state == 'ready' and self.store.packaged and self.allow_download, notify=changed)
 
     def start(self):
         """At launch: load an installed module, or fetch one the saved settings already enable."""
         if self._state == 'ready':
             self._activate()
-        elif self.is_on() and self.allow_download and self.store.entry:
+        elif self.is_on() and self.allow_download and self.store.packaged:
             self.download()
 
     def _activate(self):
@@ -217,6 +241,7 @@ class Extension(QObject):
                 return False
             self.assets = assets
             return self._activate()
+        self.loaded = self.store.current()
         return True
 
     @Slot(bool)
@@ -229,7 +254,7 @@ class Extension(QObject):
                 self.set_on(False)
         elif self._state == 'ready':
             self.set_on(True)
-        elif self.allow_download and self.store.entry:
+        elif self.allow_download and self.store.packaged:
             self.download()
         else:
             self._state, self.error = 'error', 'Module package unavailable'
@@ -240,11 +265,66 @@ class Extension(QObject):
         if self._state == 'ready':
             self.open_window()
 
+    @Slot()
+    def checkUpdate(self):
+        """Card button: read the module index now; a different package it lists is then offered to upgrade()."""
+        if not self.updatable or self.checker or self._update == 'installed':
+            return
+        def check():
+            entry, current = self.store.refresh(), self.store.current()
+            if entry is None or entry['sha256'] == (self.loaded or {}).get('sha256'):
+                return 'latest', ''
+            return ('installed' if current and current['sha256'] == entry['sha256'] else 'available'), entry['version']
+        self._work('checking', check)
+
+    @Slot()
+    def upgrade(self):
+        """Card button: install the offered package beside the one in use; it loads at the next start."""
+        entry = self.store.entry
+        if self._update != 'available' or self.checker or entry is None:
+            return
+        def install():
+            self.store.install(self.stop, lambda done, total: setattr(self, '_progress', done / max(1, total)), entry=entry)
+            return 'installed', entry['version']
+        self.stop.clear(); self._progress = 0.
+        self._work('upgrading', install)
+
+    def _work(self, state, job):
+        def run():
+            try:
+                self.update_result = job()
+            except Exception as ex:
+                self.update_result, self.error = ('failed', ''), str(ex)
+        self._update, self.update_result = state, None
+        self.checker = threading.Thread(target=run, daemon=True, name='RIO-module-update-' + self.store.name)
+        self.checker.start()
+        self.changed.emit()
+
+    def _poll_update(self):
+        if self.staged and not self.checker:
+            self._update, self._offer, self.staged = 'installed', self.staged['version'], None
+            self.changed.emit()
+        if self.checker is None:
+            # A result that needs nothing more fades back to the module's own status line.
+            if self._update in ('latest', 'failed') and time.monotonic() - self.update_at > 5:
+                self._update = ''; self.changed.emit()
+            return
+        if self.checker.is_alive():
+            if self._update == 'upgrading':
+                self.changed.emit()
+            return
+        self.checker = None
+        (self._update, self._offer), self.update_at = self.update_result, time.monotonic()
+        if self._update == 'installed':
+            self.installed()
+        self.changed.emit()
+
     def download(self):
         self.stop.clear()
         self._state, self._progress, self.result = 'downloading', 0., None
         def run():
             try:
+                self.store.refresh()  # The newest package listed for this host.
                 self.store.install(self.stop, lambda done, total: setattr(self, '_progress', done / max(1, total)))
                 self.result = 'ready'
             except Exception as ex:
@@ -253,7 +333,8 @@ class Extension(QObject):
         self.worker.start()
 
     def poll(self):
-        """GUI-thread step: publish progress and load the module once its download finishes."""
+        """GUI-thread step: publish progress, load the module once its download finishes and show update results."""
+        self._poll_update()
         if self._state != 'downloading':
             return
         if self.worker.is_alive():
@@ -271,10 +352,11 @@ class Extension(QObject):
 
     def close(self):
         self.stop.set()
-        worker = self.worker
-        if worker:
+        # An index read changes nothing on disk and may be left behind; downloads and upgrades stop first.
+        workers = [w for w in (self.worker, self.checker if self._update == 'upgrading' else None) if w]
+        for worker in workers:
             worker.join(2)
-        return not (worker and worker.is_alive())
+        return not any(worker.is_alive() for worker in workers)
 
 
 def import_path(name, assets, root):
