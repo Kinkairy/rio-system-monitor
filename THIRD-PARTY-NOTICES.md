@@ -51,3 +51,12 @@ docs/third-party/numpy/ and bundled under licenses/numpy/. See its README for
 the unmodified source, build inputs and recipe.
 
 BlackShark Bluetooth support uses Bleak (MIT), through the existing Windows Bluetooth stack. Its license and source information are in docs/third-party/bleak/. No official BlackShark EXE or DLL is bundled.
+
+
+USB screen protocol transport: cython-hidapi 0.15.0 / HIDAPI, used under the BSD license option. Upstream: https://github.com/trezor/cython-hidapi and https://github.com/libusb/hidapi. License texts are retained in docs/third-party/hidapi (BSD option). No EMonitor executable, vendor DLL or theme is included in RIO.
+
+## pySerial3.5
+The optional LT168B firmware updater uses pySerial3.5 (BSD-3-Clause). Source: https://github.com/pyserial/pyserial/tree/v3.5 . License: docs/third-party/pyserial/LICENSE.txt.
+
+## Optional LT168B lossless transport
+LZ4 v1.10.0 (Yann Collet), BSD-2-Clause; exact upstream decoder and provenance in firmware/lt168b/vendor/lz4. Python lz4 4.4.5 uses BSD-3-Clause bindings; both notices are included in docs/third-party.
