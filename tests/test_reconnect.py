@@ -19,7 +19,7 @@ class ReconnectTests(unittest.TestCase):
     def setUp(self):
         delay=patch.object(ScreenOutput,'initialization_delay',0);delay.start();self.addCleanup(delay.stop)
 
-    def test_hidden_render_demand_waits_for_queue_space_and_stops_with_writer(self):
+    def test_hidden_render_demand_keeps_latest_image_and_stops_with_writer(self):
         entered=threading.Event();release=threading.Event();sender=Mock()
         sender.send.side_effect=lambda pixels:(entered.set(),release.wait(2))
         session=DisplaySession()
@@ -30,9 +30,9 @@ class ReconnectTests(unittest.TestCase):
                 frame=Image.new('RGB',(480,480))
                 self.assertTrue(session.needs_frame)
                 output.submit(frame);self.assertTrue(entered.wait(1))
-                # One next frame can be prepared while the current frame transfers.
+                # The pending image stays replaceable while the current frame transfers.
                 self.assertTrue(session.needs_frame)
-                output.submit(frame);self.assertFalse(session.needs_frame)
+                output.submit(frame);self.assertTrue(session.needs_frame)  # pending image may be replaced
                 output.stop.set();self.assertFalse(session.needs_frame)
             finally:release.set();self.assertTrue(session.close())
         self.assertFalse(session.needs_frame)
@@ -58,7 +58,8 @@ class ReconnectTests(unittest.TestCase):
             self.assertTrue(old.closed);writer=Writer(path);created.append(writer);return writer
         session=DisplaySession(enumerator=lambda:['new'],output_factory=factory);session.output=old
         session.reconnect(0);self.assertFalse(created);self.assertFalse(old.closed)
-        old.finished.set();session.reconnect(.2)
+        old.finished.set();session.reconnect(.2);self.assertFalse(created)
+        session.reconnect(1.2)
         self.assertEqual(created[0].path,'new');self.assertTrue(session.close())
 
     def test_old_handle_refusing_close_prevents_a_second_owner(self):
@@ -114,14 +115,14 @@ class ReconnectTests(unittest.TestCase):
             finally:release.set();self.assertTrue(output.close())
         self.assertTrue(output.finished.is_set());self.assertEqual(output.error,'device gone')
         transport.close.assert_called_once();sender.send.assert_called_once();sender.lcd_info.assert_called_once()
-        self.assertLess(transport.mock_calls.index(unittest.mock.call.reset_pipes()),transport.mock_calls.index(unittest.mock.call.close()))
+        transport.reset_pipes.assert_not_called()
 
-    def test_timeout_clears_pipes_before_reconnect_and_frames_resume_without_replug(self):
+    def test_reconnect_waits_for_close_and_post_failure_backoff(self):
         entered=threading.Event();release=threading.Event();sent=threading.Event()
         first,second=Mock(),Mock();sender1,sender2=Mock(),Mock()
         sender1.send.side_effect=OSError('USB timeout')
         def reset():entered.set();release.wait(2)
-        first.reset_pipes.side_effect=reset;sender2.send.side_effect=lambda pixels:sent.set()
+        first.close.side_effect=reset;sender2.send.side_effect=lambda pixels:sent.set()
         enumerator=Mock(return_value=['same-device'])
         session=DisplaySession(enumerator=enumerator)
         with patch('rio_monitor.output.WinUSB',side_effect=[first,second]) as usb,patch('rio_monitor.output.FrameSender',side_effect=[sender1,sender2]):
@@ -130,16 +131,34 @@ class ReconnectTests(unittest.TestCase):
                 self.assertTrue(entered.wait(1));self.assertFalse(failed.finished.is_set())
                 session.reconnect(10);self.assertEqual(usb.call_count,1);self.assertEqual(enumerator.call_count,1)
                 release.set();self.assertTrue(failed.finished.wait(1));first.close.assert_called_once()
-                session.reconnect(11);self.assertEqual(enumerator.call_count,2)
+                session.reconnect(11);self.assertEqual(enumerator.call_count,1)
+                session.reconnect(12);self.assertEqual(enumerator.call_count,2)
                 session.submit(Image.new('RGB',(480,480)));self.assertTrue(sent.wait(1))
                 self.assertIsNone(session.output.error);self.assertEqual(usb.call_count,2)
             finally:release.set();self.assertTrue(session.close())
         second.reset_pipes.assert_not_called()
 
-    def test_reset_failure_preserves_original_error_and_still_closes_handle(self):
-        transport=Mock();sender=Mock();sender.send.side_effect=OSError('USB timeout')
-        transport.reset_pipes.side_effect=OSError('device removed')
-        with patch('rio_monitor.output.WinUSB',return_value=transport),patch('rio_monitor.output.FrameSender',return_value=sender):
-            output=ScreenOutput('device');output.submit(Image.new('RGB',(480,480)));self.assertTrue(output.finished.wait(1));self.assertTrue(output.close())
-        self.assertIn('USB timeout',output.error);self.assertIn('USB pipe reset failed: device removed',output.error)
-        transport.close.assert_called_once();sender.send.assert_called_once();sender.lcd_info.assert_called_once()
+    def test_slow_failed_worker_gets_backoff_after_failure_not_after_open(self):
+        created=[]
+        def factory(path):writer=Writer(path);created.append(writer);return writer
+        session=DisplaySession(enumerator=lambda:['device'],output_factory=factory)
+        session.reconnect(0);old=created[0]
+        old.error='timeout';old.finished.set()
+        session.reconnect(10);session.reconnect(10.9)
+        self.assertEqual(len(created),1)
+        session.reconnect(11);self.assertEqual(len(created),2);self.assertTrue(old.closed)
+        self.assertTrue(session.close())
+
+    def test_uncertain_out_waits_for_device_removal_before_new_commands(self):
+        old=Writer('device');old.error='partial OUT';old.requires_replug=True;old.finished.set()
+        paths=['device'];factory=Mock(side_effect=Writer)
+        session=DisplaySession(enumerator=lambda:list(paths),output_factory=factory);session.output=old
+        for now in (0,5,20):session.reconnect(now)
+        factory.assert_not_called();self.assertTrue(session.snapshot()['usb_requires_replug'])
+        with self.assertRaisesRegex(RuntimeError,'uncertain'):session.connect()
+        buffer=io.BytesIO();Image.new('RGB',(480,480)).save(buffer,'GIF')
+        with self.assertRaisesRegex(RuntimeError,'uncertain'):session.replace(pack_resource(buffer.getvalue()),lambda *args:None)
+        self.assertFalse(session.resource_active)
+        paths.clear();session.reconnect(21)
+        paths.append('device');session.reconnect(22);session.reconnect(23)
+        factory.assert_called_once_with('device');self.assertTrue(old.closed);self.assertTrue(session.close())

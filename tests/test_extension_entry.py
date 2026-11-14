@@ -116,6 +116,30 @@ class ExtensionEntryTests(unittest.TestCase):
     self.bridge = Bridge(self.app, Settings(language='zh'), Mock(), Frames(), capture=True)
     self.addCleanup(lambda: (self.bridge.save_timer.stop(), self.bridge.storage.close()))
 
+  def test_real_notice_popup_tracks_usb_recovery_and_preserves_other_notices(self):
+    bridge=self.bridge
+    make_ext=lambda: Extension(Installed(),is_on=lambda:False,load=lambda assets:None,set_on=lambda value:None,open_window=lambda:None)
+    fangcun_ext,blackshark_ext=make_ext(),make_ext()
+    engine,window=load_settings(bridge,fangcun_ext,blackshark_ext)
+    state=lambda error=None,sent=0:dict(mode='monitor',usb_error=error,usb_sent=sent)
+    try:
+        notice=window.findChild(QObject,'noticePopup');self.assertIsNotNone(notice)
+        bridge.updateUsb(state('timeout'),now=0);QTest.qWait(40)
+        self.assertFalse(notice.property('visible'))
+        bridge.updateUsb(state('timeout'),now=5);QTest.qWait(40)
+        self.assertTrue(notice.property('visible'))
+        bridge.updateUsb(state(),now=6);QTest.qWait(40)
+        self.assertTrue(notice.property('visible'))
+        bridge.updateUsb(state(sent=1),now=7);QTest.qWait(200)
+        self.assertFalse(notice.property('visible'))
+        bridge.updateUsb(state('timeout'),now=8);bridge.updateUsb(state('timeout'),now=13);QTest.qWait(40)
+        self.assertTrue(notice.property('visible'))
+        bridge.tell('Sensors: keep this notice');bridge.updateUsb(state(sent=1),now=14);QTest.qWait(40)
+        self.assertTrue(notice.property('visible'));self.assertEqual(bridge.notice,'Sensors: keep this notice')
+    finally:
+        from PySide6.QtCore import QCoreApplication,QEvent
+        window.hide();engine.deleteLater();QCoreApplication.sendPostedEvents(None,QEvent.DeferredDelete);self.app.processEvents()
+
   def test_extensions_header_tab_shows_switch_and_settings_per_module(self):
     app, bridge = self.app, self.bridge
     fangcun = Fangcun()

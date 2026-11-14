@@ -90,7 +90,7 @@ class ResourceTests(unittest.TestCase):
 
 class OwnershipTests(unittest.TestCase):
     def test_frame_owner_is_closed_before_resource_handle_opens(self):
-        order=[];output=Mock(error=None,sent=2)
+        order=[];output=Mock(error=None,sent=2,requires_replug=False)
         output.close.side_effect=lambda:order.append('closed') or True
         t=Transport()
         def transport_factory(path):self.assertEqual(order,['closed']);order.append('resource');return t
@@ -99,7 +99,7 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(s.mode,'stored');output.submit.assert_not_called();self.assertFalse(s.resource_active)
     def test_old_writer_refusing_shutdown_prevents_all_resource_commands(self):
         factory=Mock();s=DisplaySession(enumerator=lambda:['device'],transport_factory=factory)
-        s.output=Mock();s.output.close.return_value=False
+        s.output=Mock(requires_replug=False);s.output.close.return_value=False
         with self.assertRaises(RuntimeError):s.replace(pack_resource(gif()),lambda *args:None)
         factory.assert_not_called();self.assertFalse(s.resource_active);self.assertEqual(s.mode,'stored')
     def test_multiple_devices_do_not_open_resource_handle(self):

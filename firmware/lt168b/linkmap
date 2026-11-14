@@ -1,0 +1,29 @@
+/* App base6000A000 is verified by original eM133 startup VBR and first
+ * scoped write/readback. Each new flash still needs exact owner approval. */
+MEMORY {
+    Flash (rx) : ORIGIN = 0x6000A000, LENGTH = 1960K
+    RAM (rwx) : ORIGIN = 0x00800800, LENGTH = 254K
+    Display (rw) : ORIGIN = 0x00840000, LENGTH = 512K
+}
+STACK_LOCATION = ORIGIN(RAM) + LENGTH(RAM) - 4;
+SECTIONS {
+    .vector : { VECTOR_LOCATION = .; KEEP(*vector_table.o(.rodata*)) } > Flash
+    .text : {
+        . = ALIGN(4); *(.rodata*) *(.text*) . = ALIGN(4); _end_text = .;
+    } > Flash
+    .data : AT(_end_text) {
+        _start_data = .; *(.data*) . = ALIGN(4); _end_data = .;
+    } > RAM
+    .bss (NOLOAD) : {
+        _start_bss = .; *(.bss*) *(COMMON) . = ALIGN(4); _end_bss = .;
+    } > RAM
+    .frame_staging (NOLOAD) : {
+        . = ALIGN(4); KEEP(*(.frame_staging)) . = ALIGN(4); _end_staging = .;
+    } > RAM
+    _end = _end_staging;
+    .framebuffer (NOLOAD) : { KEEP(*(.framebuffer)) } > Display
+    ASSERT(_end_text + SIZEOF(.data) <= 0x6000D000, "Application exceeds scoped 12KiB image")
+    ASSERT(_end_staging + 8192 < STACK_LOCATION, "Insufficient stack space")
+    ASSERT(SIZEOF(.framebuffer) == 460800, "Wrong framebuffer size")
+    ASSERT(ADDR(.framebuffer) == 0x00840000, "Wrong framebuffer base")
+}

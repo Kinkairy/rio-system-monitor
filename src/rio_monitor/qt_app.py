@@ -18,6 +18,8 @@ from .telemetry import Collector
 from .render_cache import Renderer
 from .temperature_component import TemperatureComponent
 from .storage import DisplaySession,StorageJob
+from .output import configure_usb_logging
+from .firmware_update import FirmwareUpdate
 from .music.controller import Music
 from .music.renderer import MusicRenderer
 from .music.state import AutomaticMusicView
@@ -40,19 +42,36 @@ class Frames(QQuickImageProvider):
  def requestImage(self,id,size,requestedSize):return self.image
 
 class Bridge(QObject):
- changed=Signal();frameChanged=Signal();noticeChanged=Signal();defaultConfirmationChanged=Signal()
+ changed=Signal();frameChanged=Signal();noticeChanged=Signal();defaultConfirmationChanged=Signal();firmwareChanged=Signal()
  def __init__(self,app,settings,weather,provider,capture=False,monitor=None,storage=None,music=None,updater=None):
   super().__init__();self.app=app;self.s=settings;self.weather=weather;self.frames=provider;self.capture=capture;self.win=None;self.tray=None;self._frame=0;self._notice='';self._saved=False;self._results=[];self._status='';self._busy=False;self._city='';self.loc=None;self.mode=settings.weather_mode;self.city=settings.city;self.mail=queue.Queue();self.generation=0;self.visible=True;self.quitting=False;self.shutdown=None
+  self._notice_source=None;self._usb_error_since=None;self._usb_error_reported=False;self._usb_replug_reported=False
   self._dirty=False;self.save_timer=QTimer(self);self.save_timer.setSingleShot(True);self.save_timer.setInterval(250);self.save_timer.timeout.connect(self.flushSettings)
   self.monitor=monitor or TemperatureComponent(Path(),settings.temperature_monitor,start=False);self.monitor_snapshot=None
   self.storage=storage or StorageJob(DisplaySession(settings.display_mode),Path());self.storage_snapshot=None
   self.music=music or Music(Path(),start=False);self.music_signature=None
+  self.firmware=FirmwareUpdate(self.storage.session,self.storage.assets.parent/'firmware',config_path().parent/'firmware-logs');self.firmware_snapshot=self.firmware.snapshot()
   self.updater=updater;self.update_snapshot=updater.snapshot() if updater else dict(state='idle',connection='unknown',progress=0);self.update_exit_started=False
   self.blackshark_module=None;self.blackshark_samples=lambda:{};self.ui_engine=None
   self._reset_requested=False;self.game=None;self.fangcun=None;self.extensions={}
   if settings.weather_mode=='manual':
    try:self._city=json.loads(settings.city)['label'].split(',')[0]
    except (ValueError,KeyError):pass
+ firmwareState=Property(str,lambda self:self.firmware.snapshot()['state'],notify=firmwareChanged)
+ firmwareBusy=Property(bool,lambda self:self.firmware.snapshot()['busy'],notify=firmwareChanged)
+ firmwareProgress=Property(float,lambda self:self.firmware.snapshot()['progress'],notify=firmwareChanged)
+ firmwareError=Property(str,lambda self:self.firmware.snapshot()['error'],notify=firmwareChanged)
+ @Slot()
+ def requestFirmware(self):
+  if self.storage.session.snapshot()['usb_protocol']=='lt168b-rio-bench':
+   self.tell('此屏幕已支持 RIO 完整画面，无需再次写入固件。' if self.s.language=='zh' else 'RIO firmware is already installed; no rewrite is needed.');return
+  if not self.firmware.snapshot()['busy']:self.firmware.update(state='available',error='');self.firmwareChanged.emit()
+ @Slot()
+ def startFirmware(self):
+  if self.capture:return
+  self.firmware.start();self.firmwareChanged.emit()
+ @Slot()
+ def cancelFirmware(self):self.firmware.dismiss();self.firmwareChanged.emit()
  def getLanguage(self):return self.s.language
  language=Property(str,getLanguage,notify=changed)
  rotation=Property(int,lambda self:self.s.rotation,notify=changed)
@@ -181,7 +200,25 @@ class Bridge(QObject):
  @Slot(bool)
  def setMonitorEnabled(self,value):
   self.monitor.request(value);self.applySettings(temperature_monitor=self.monitor.enabled);self.changed.emit()
- def tell(self,text):self._notice=text;self.noticeChanged.emit()
+ def tell(self,text,source=None):
+  self._notice=text;self._notice_source=source;self.noticeChanged.emit()
+ def updateUsb(self,state,now=None):
+  now=time.monotonic() if now is None else now
+  if state['mode']!='monitor' or (state['usb_sent']>0 and not state['usb_error']):
+   self._usb_error_since=None;self._usb_error_reported=False;self._usb_replug_reported=False
+   if state['mode']=='monitor' and state.get('usb_samples_supported') and not state.get('usb_frames_supported',True):
+    text='此协议当前仅接入监控数值；方寸山和音乐实时画面尚未适配。' if self.s.language=='zh' else 'This protocol currently provides telemetry; Fangcun and music live frames are not yet supported.'
+    if self._notice_source in (None,'usb','display-capability') and self._notice!=text:self.tell(text,source='display-capability')
+   elif self._notice_source in ('usb','display-capability'):self.tell('')
+   return
+  if state['usb_error'] and self._usb_error_since is None:self._usb_error_since=now
+  # Opening a new handle is not recovery: wait for an acknowledged frame.
+  replug=state.get('usb_requires_replug',False)
+  if self._usb_error_since is not None and now-self._usb_error_since>=5 and (not self._usb_error_reported or (replug and not self._usb_replug_reported)):
+   self._usb_error_reported=True
+   self._usb_replug_reported=replug
+   if replug:self.tell('屏幕数据传输中断，请拔插圆屏 USB 连接以恢复。' if self.s.language=='zh' else 'The screen transfer was interrupted. Unplug and reconnect the screen USB cable.',source='usb')
+   else:self.tell('屏幕连接尚未恢复，正在自动重连。' if self.s.language=='zh' else 'The screen connection has not recovered. Reconnecting automatically.',source='usb')
  def applySettings(self,**values):
   value=replace(self.s,**values)
   if value==self.s:return
@@ -309,6 +346,10 @@ class Bridge(QObject):
    except Exception as ex:self.mail.put(('locate',gen,None,str(ex)))
   threading.Thread(target=run,daemon=True).start()
  def consume(self):
+  if not self.capture and self.firmware.offer(self.storage.session.snapshot()['usb_protocol']):
+   if self.win:self.show()
+  firmware_snapshot=self.firmware.snapshot()
+  if firmware_snapshot!=self.firmware_snapshot:self.firmware_snapshot=firmware_snapshot;self.firmwareChanged.emit()
   if self.updater:
    update_snapshot=self.updater.snapshot()
    if update_snapshot!=self.update_snapshot:self.update_snapshot=update_snapshot;self.changed.emit()
@@ -316,13 +357,15 @@ class Bridge(QObject):
   if signature!=self.music_signature:self.music_signature=signature;self.changed.emit()
   storage_snapshot=self.storage.snapshot()
   if storage_snapshot!=self.storage_snapshot:
-   self.storage_snapshot=storage_snapshot;self.applySettings(display_mode=storage_snapshot['mode']);self.changed.emit()
+   self.storage_snapshot=storage_snapshot
+   if storage_snapshot['mode'] in ('monitor','stored'):self.applySettings(display_mode=storage_snapshot['mode'])
+   self.changed.emit()
   snapshot=self.monitor.snapshot()
   if snapshot!=self.monitor_snapshot:
    self.monitor_snapshot=snapshot;self.applySettings(temperature_monitor=snapshot['enabled']);self.changed.emit()
   # A staged program or installed module updates restart RIO once screen writes, temperature and BlackShark work are idle.
   blackshark_busy=self.blackshark_module is not None and self.blackshark_module.runtime.snapshot()['busy']
-  if self.updater and not self.capture and (self.update_snapshot['state']=='ready' or self.updater.restart) and not self.update_exit_started and not storage_snapshot['busy'] and not snapshot['busy'] and not blackshark_busy:
+  if self.updater and not self.capture and (self.update_snapshot['state']=='ready' or self.updater.restart) and not self.update_exit_started and not storage_snapshot['busy'] and not snapshot['busy'] and not blackshark_busy and not self.firmware.snapshot()['busy']:
    self.update_exit_started=True;self.updater.relaunch=True;self.exit();return
   if self.mode=='auto' and not self._city and self.weather.location:
    self._city=self.weather.location[2].split(',')[0];self.changed.emit()
@@ -358,6 +401,7 @@ def main():
  capture_mode=bool(args.ui_capture or args.fangcun_capture)
  instance=True if capture_mode else acquire_instance()
  if instance is None:return 0
+ if not capture_mode:configure_usb_logging(config_path().parent/'logs')
  if sys.platform=='win32':
   import ctypes
   shell=ctypes.WinDLL('shell32');shell.SetCurrentProcessExplicitAppUserModelID.argtypes=[ctypes.c_wchar_p]
@@ -401,7 +445,7 @@ def main():
   def show_content():
    storage.prepare(assets/'default-screen.gif');bridge.win.findChild(QObject,'storagePopup').setProperty('visible',True)
   QTimer.singleShot(150,show_content)
- frames=queue.Queue(maxsize=1);stop=threading.Event();reported_error=[None];render_times=deque(maxlen=300);render_count=[0];run_started=time.monotonic();latest_samples=[{}];sensor_errors=queue.Queue();active_view=['monitor']
+ frames=queue.Queue(maxsize=1);stop=threading.Event();render_times=deque(maxlen=300);render_count=[0];run_started=time.monotonic();latest_samples=[{}];sensor_errors=queue.Queue();active_view=['monitor']
  bridge.blackshark_samples=lambda:latest_samples[0]
  if args.blackshark_page:QTimer.singleShot(0,lambda:bridge.showBlackSharkPage(('screen','fan','lighting').index(args.blackshark_page)))
  def collect_loop():
@@ -410,7 +454,7 @@ def main():
    if capture_mode:return
    collector=Collector(temperature=monitor)
    while not stop.is_set():
-    started=time.monotonic();latest_samples[0]=collector.collect();stop.wait(max(0,1-(time.monotonic()-started)))
+    started=time.monotonic();latest_samples[0]=collector.collect();session.submit_samples(latest_samples[0]);stop.wait(max(0,1-(time.monotonic()-started)))
   except Exception as ex:sensor_errors.put(str(ex))
   finally:
    if collector:collector.gpu.close()
@@ -427,7 +471,7 @@ def main():
     frame=(game_frame if game_frame is not None else Image.new('RGB',(480,480),'#101a18')) if show_game else music_renderer.render(music_state,language=bridge.s.language) if show_music else renderer.render(latest_samples[0],weather=weather.reading)
     if not show_game:frame=transition.render(active_view[0],frame,started)
     render_times.append(time.monotonic()-started);render_count[0]+=1
-    session.submit(frame.rotate(-bridge.s.rotation) if bridge.s.rotation else frame)
+    session.submit(frame,bridge.s.rotation,bridge.s.rotation_offsets)
     if bridge.visible:
      try:frames.get_nowait()
      except queue.Empty:pass
@@ -444,8 +488,7 @@ def main():
     game_provider.image=QImage(preview_bytes(game_frame),480,480,480*4,QImage.Format_RGBA8888).copy();game_bridge._frame=game_id;game_bridge.frameChanged.emit()
   if not sensor_errors.empty():bridge.tell('Sensors: '+sensor_errors.get())
   usb=session.snapshot()
-  if usb['mode']=='monitor' and usb['usb_error'] and usb['usb_error']!=reported_error[0]:
-   reported_error[0]=usb['usb_error'];bridge.tell('USB: '+usb['usb_error'])
+  bridge.updateUsb(usb)
   try:data=frames.get_nowait();provider.image=QImage(data,480,480,480*4,QImage.Format_RGBA8888).copy();bridge._frame+=1;bridge.frameChanged.emit()
   except queue.Empty:pass
  timer=QTimer();timer.timeout.connect(tick);timer.setTimerType(Qt.PreciseTimer);timer.start(33)
@@ -459,6 +502,7 @@ def main():
  report_timer=QTimer();report_timer.timeout.connect(performance_report)
  if args.performance_report:report_timer.start(1000)
  def shutdown():
+  if not bridge.firmware.close():return False
   if not all([ext.close() for ext in bridge.extensions.values()]):return False
   if bridge.blackshark_module and not bridge.blackshark_module.close():return False
   if bridge.fangcun and not bridge.fangcun.close():return False

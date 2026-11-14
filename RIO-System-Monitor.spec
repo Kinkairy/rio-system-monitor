@@ -16,10 +16,14 @@ from package_modules import MODULES,package as package_modules
 runtime_assets=prepare(root/'assets',root/'build/runtime-assets')
 sys.path.insert(0,str(root/'src'))
 from rio_monitor import __version__
+from rio_monitor.firmware_update import load_plan
+firmware_dir=Path(os.environ['RIO_LT168B_FIRMWARE_DIR']).resolve()
+load_plan(firmware_dir)  # Never package an unreviewed or altered image.
+
 # Extension modules leave the EXE; assets/modules.json lists them and each is released apart (package_modules.py --release).
-package_modules(runtime_assets,__version__)
+package_modules(runtime_assets,__version__,disable_fangcun_download=os.environ.get("RIO_NO_FANGCUN_DOWNLOAD")=="1")
 module_packages=[spec['package'] for spec in MODULES.values()]
-a=Analysis([str(root/'launch.py')],pathex=[str(root/'src')],binaries=music_binaries,datas=[(str(runtime_assets),'assets'),(str(root/'docs/third-party'),'licenses'),(str(root/'THIRD-PARTY-NOTICES.md'),'licenses'),(str(root/'docs/distribution-licenses.md'),'licenses'),(str(root/'LICENSE'),'licenses/RIO')],hiddenimports=music_imports+module_packages,hookspath=[],hooksconfig={},runtime_hooks=[],excludes=['tkinter','PIL.AvifImagePlugin','PIL._avif'],noarchive=False)
+a=Analysis([str(root/'launch.py')],pathex=[str(root/'src')],binaries=music_binaries,datas=[(str(runtime_assets),'assets'),(str(firmware_dir/'em133-v3-rio1.json'),'firmware'),(str(root/'docs/third-party'),'licenses'),(str(root/'THIRD-PARTY-NOTICES.md'),'licenses'),(str(root/'docs/distribution-licenses.md'),'licenses'),(str(root/'LICENSE'),'licenses/RIO')],hiddenimports=music_imports+module_packages,hookspath=[],hooksconfig={},runtime_hooks=[],excludes=['tkinter','PIL.AvifImagePlugin','PIL._avif'],noarchive=False)
 # Analysing the modules keeps their dependencies in the EXE; their own code ships only in the packages.
 a.pure=[entry for entry in a.pure if entry[0].split('.')[0] not in module_packages]
 removed=[n for n,_,_ in list(a.binaries)+list(a.datas) if not keep(n)]

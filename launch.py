@@ -1,6 +1,10 @@
 import sys
 
-if '--blackshark' in sys.argv[1:]:
+if '--screen-firmware' in sys.argv[1:]:
+    from rio_monitor.firmware_update import main
+    args=sys.argv[1:];args.remove('--screen-firmware')
+    raise SystemExit(main(args))
+elif '--blackshark' in sys.argv[1:]:
     from pathlib import Path
     from rio_monitor.extensions import import_path
     from rio_monitor.settings import config_path

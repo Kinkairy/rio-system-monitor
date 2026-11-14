@@ -55,6 +55,7 @@ class ModuleStore:
         self.root, self.host_assets = Path(root) / name, Path(host_assets)
         # Packaged builds list the modules they host; their code is never in the EXE and comes only from the index.
         self.packaged = name in (manifest or {}).get('modules', ())
+        self.download_allowed = name not in (manifest or {}).get('disabled_downloads', ())
         self.listed = []  # Entries from the last index read; empty until a read succeeds.
         self.lock = threading.Lock()  # The updater and the settings card may both install.
 
@@ -112,6 +113,8 @@ class ModuleStore:
             self._install(entry, stop, progress)
 
     def _install(self, entry, stop, progress):
+        if not self.download_allowed:
+            raise PermissionError('Module downloads disabled in this distribution')
         asset = dict(browser_download_url=RELEASE_URL.format(version=entry['release'], asset=entry['asset']),
                      digest='sha256:' + entry['sha256'], size=entry['size'], version=entry['version'], file=entry['asset'])
         archive = download_asset(asset, self.root / 'downloads', stop, progress)
@@ -176,7 +179,8 @@ class Extension(QObject):
         super().__init__()
         self.store, self.is_on, self.load, self.set_on, self.open_window = store, is_on, load, set_on, open_window
         # installed() runs once an update is in place; it loads at the next start, which packaged hosts make once idle.
-        self.allow_download, self.installed = allow_download, installed
+        self.allow_download = allow_download and getattr(store, 'download_allowed', True)
+        self.installed = installed
         self.assets = store.location()
         self._state = 'ready' if self.assets is not None else 'missing'
         self._progress, self.stop, self.worker, self.result, self.error = 0., threading.Event(), None, None, ''
@@ -263,7 +267,7 @@ class Extension(QObject):
     def upgrade(self):
         """Card link, clicked on an offer: install the package beside the one in use; it loads at the next start."""
         entry = self.store.entry
-        if self._update != 'available' or self.checker or entry is None:
+        if not self.allow_download or self._update != 'available' or self.checker or entry is None:
             return
         def install():
             self.store.install(self.stop, lambda done, total: setattr(self, '_progress', done / max(1, total)), entry=entry)
@@ -273,6 +277,8 @@ class Extension(QObject):
 
     def offer(self, index):
         """Updater step, off the GUI thread: list this module's packages; a newer one is offered at the next poll."""
+        if not self.allow_download:
+            return
         entry = self.store.refresh(index)  # Before the first download this also gives the card its download size.
         if self.updatable and entry and entry['sha256'] != (self.loaded or {}).get('sha256'):
             self.found = entry['version']
@@ -311,6 +317,8 @@ class Extension(QObject):
         self.changed.emit()
 
     def download(self):
+        if not self.allow_download:
+            return
         self.stop.clear()
         self._state, self._progress, self.result = 'downloading', 0., None
         def run():

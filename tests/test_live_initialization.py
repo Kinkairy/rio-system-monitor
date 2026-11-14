@@ -1,4 +1,4 @@
-import queue,struct,threading,unittest
+import itertools,queue,struct,threading,unittest
 from unittest.mock import Mock,patch
 from PIL import Image
 from rio_monitor.protocol import FrameSender,ProtocolError
@@ -14,6 +14,8 @@ class Clock:
   return self.stopped
 
 class LiveInitializationTests(unittest.TestCase):
+ def setUp(self):
+  tags=patch('rio_monitor.protocol._tags',itertools.count(1));tags.start();self.addCleanup(tags.stop)
  def test_oem_query_is_cd03_in_with_five_bytes_and_checked_status(self):
   transport=Mock();transport.write.side_effect=lambda ep,data:len(data)
   transport.read.side_effect=[bytes.fromhex('e001e001ff'),bytes.fromhex('55534253010000000500000000')]
@@ -22,6 +24,7 @@ class LiveInitializationTests(unittest.TestCase):
   self.assertEqual(ep,1);self.assertEqual(command,struct.pack('<4sIIBBB16s',b'USBC',1,5,128,0,16,bytes.fromhex('cd000000000300000000000000000000')))
   self.assertEqual(transport.read.call_args_list,[unittest.mock.call(129,5),unittest.mock.call(129,13)])
  def test_bad_query_reply_latches_and_forbids_any_frame(self):
+  tags=patch('rio_monitor.protocol._tags',itertools.repeat(1));tags.start();self.addCleanup(tags.stop)
   for data,status in [(b'bad',bytes(13)),(bytes.fromhex('e001e001ff'),bytes.fromhex('55534253020000000500000000')),(bytes.fromhex('e001e001ff'),bytes.fromhex('55534253010000000500000001')),(struct.pack('<HHB',240,240,0),bytes.fromhex('55534253010000000500000000'))]:
    transport=Mock();transport.write.side_effect=lambda ep,data:len(data);transport.read.side_effect=[data,status];sender=FrameSender(transport)
    with self.assertRaises(ProtocolError):sender.lcd_info()

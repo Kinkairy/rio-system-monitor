@@ -1,5 +1,5 @@
 """Per-user preferences; no service, elevated writes or automatic USB connection."""
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 import json, os, sys
 
@@ -22,6 +22,8 @@ class Settings:
     music_source: str = ''
     music_lyrics_consent: int = 2
     blackshark_enabled: bool = False
+    # Physical mounting zero, scoped to the connected hardware adapter.
+    rotation_offsets: dict[str, int] = field(default_factory=dict)
 
 def config_path():
     return Path(os.environ.get('LOCALAPPDATA',Path.home()/'.config'))/'RIO-Monitor'/'settings.json'
@@ -31,6 +33,9 @@ def load():
         raw=json.loads(config_path().read_text(encoding='utf-8'))
         s=Settings(**{k:v for k,v in raw.items() if k in Settings.__dataclass_fields__})
         if s.fps not in (15,20,30) or (not isinstance(s.rotation,int) or not 0<=s.rotation<=359) or s.weather_mode not in ('off','auto','manual'):raise ValueError('Invalid settings')
+        # A malformed calibration must not discard unrelated saved preferences.
+        offsets=s.rotation_offsets
+        s.rotation_offsets={k:v for k,v in offsets.items() if isinstance(k,str) and k and type(v) is int and 0<=v<=359} if isinstance(offsets,dict) else {}
         if s.language not in ('en','zh') or not isinstance(s.city,str) or not isinstance(s.start_hidden,bool) or not isinstance(s.autostart,bool) or not isinstance(s.temperature_monitor,bool):raise ValueError('Invalid settings')
         if not isinstance(s.game_enabled,bool) or type(s.gourd_x) is not int or type(s.gourd_y) is not int:raise ValueError('Invalid game setting')
         if s.display_mode not in ('monitor','stored'):raise ValueError('Invalid display mode')

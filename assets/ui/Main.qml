@@ -180,6 +180,24 @@ Rio.PanelWindow {
   Row { id: actionRow; x: 14; y: parent.height-48; width: parent.width-28; height: 34; spacing: 8 }
  }
  DialogPopup {
+  id: firmwarePopup; objectName: "firmwarePopup"; width: 360; height: 382
+  closePolicy: bridge.firmwareBusy ? Popup.NoAutoClose : Popup.CloseOnEscape
+  onClosed: { if(!bridge.firmwareBusy) bridge.cancelFirmware() }
+  ColumnLayout { anchors.fill: parent; spacing: 12
+   RioText { text: win.tr("Install RIO screen firmware","安装 RIO 屏幕固件"); font.pixelSize: 17; color: "#edf0f2" }
+   RioText { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 12; color: "#c2cdd0"
+    text: bridge.firmwareState==="available" ? win.tr("Only for the verified eM133-V3 / LT168B round screen. This replaces the original application to enable full RIO images. It writes 12 KiB; bootloader and theme storage are retained. A wrong board or power loss can leave the screen blank. After confirming the model, hold the bottom button while reconnecting USB, then release after 3 seconds. RIO verifies the original firmware before writing.","仅适用于已验证的 eM133-V3 / LT168B 圆屏。将替换原厂应用以显示 RIO 完整画面，写入应用区前 12 KiB，保留引导程序和主题存储。型号错误或中途断电可能导致黑屏。确认型号并开始后，请按住底部按钮重新插入 USB，3 秒后松开。RIO 核对原厂固件后自动写入。") : bridge.firmwareState==="waiting" ? win.tr("Unplug screen USB. Hold the bottom button while plugging it back in, then release after 3 seconds. RIO will detect upgrade mode, write and verify automatically. Waiting up to 3 minutes.","拔下屏幕 USB，按住底部按钮插回，3 秒后松开。RIO 检测到升级模式后会自动写入、校验并连接。等待上限 3 分钟。") : bridge.firmwareState==="writing" ? win.tr("Writing and verifying. Keep the screen connected and do not power off.","正在写入并校验，请勿拔线或断电。") : bridge.firmwareState==="done" ? win.tr("Firmware verified and started. RIO is connecting automatically.","固件校验完成并已启动，RIO 正在自动连接。") : bridge.firmwareState==="cancelled" ? win.tr("Cancelled before writing. No firmware was changed.","已在写入前取消，未改动固件。") : win.tr("Update stopped. It will not retry automatically. Keep the device connected and retain the firmware log.","升级已停止，不会自动重试。请保留设备连接和固件日志。")
+   }
+   RioText { Layout.fillWidth: true; Layout.fillHeight: true; wrapMode: Text.WrapAnywhere; font.pixelSize: 11; color: "#eb9595"; text: bridge.firmwareError }
+   ProgressBar { Layout.fillWidth: true; from: 0; to: 1; value: bridge.firmwareProgress; indeterminate: bridge.firmwareState==="waiting"; visible: bridge.firmwareBusy }
+   RowLayout { Layout.fillWidth: true; spacing: 12
+    ActionButton { objectName: "firmwareCancelButton"; Layout.fillWidth: true; text: bridge.firmwareBusy ? win.tr("Cancel","取消") : win.tr("Close","关闭"); enabled: bridge.firmwareState!=="writing"; onClicked: { bridge.cancelFirmware(); if(!bridge.firmwareBusy) firmwarePopup.close() } }
+    ActionButton { objectName: "firmwareStartButton"; Layout.fillWidth: true; visible: bridge.firmwareState==="available"; text: win.tr("Confirm model · Start","确认型号 · 开始"); onClicked: bridge.startFirmware() }
+   }
+  }
+ }
+ Connections { target: bridge; function onFirmwareChanged() { if(bridge.firmwareState!=="idle") firmwarePopup.open(); else firmwarePopup.close() } }
+ DialogPopup {
   id: musicPopup; objectName: "musicPopup"; height: 410
   ColumnLayout { anchors.fill: parent; spacing: 12
    RowLayout { Layout.fillWidth: true; RioText { text: win.tr("Music settings","音乐设置"); font.pixelSize: 17; color: "#edf0f2"; Layout.fillWidth: true } CloseButton { onClicked: musicPopup.close() } }
@@ -275,10 +293,10 @@ Rio.PanelWindow {
    ConfirmationActions { cancelObjectName: "cancelLocateButton"; okObjectName: "confirmLocateButton"; onRejected: consentPopup.close(); onAccepted: { consentPopup.close(); bridge.locateCity() } }
   }
  }
- Popup { id: notice; popupType: Popup.Item; parent: Overlay.overlay; x: (win.width-width)/2; y: (win.height-height)/2; width: 366; height: 190; modal: true; padding: 20
+ Popup { id: notice; objectName: "noticePopup"; popupType: Popup.Item; parent: Overlay.overlay; x: (win.width-width)/2; y: (win.height-height)/2; width: 366; height: 190; modal: true; padding: 20
   background: Rectangle { color: "#1a2024"; radius: 12; border.color: "#354047" }
   ColumnLayout { anchors.fill: parent; RioText { Layout.fillWidth: true; Layout.fillHeight: true; wrapMode: Text.WordWrap; text: bridge.notice; color: "#dce3e6"; font.pixelSize: 13 } ActionButton { Layout.alignment: Qt.AlignRight; text: win.tr("OK","确定"); Layout.preferredWidth: 80; onClicked: notice.close() } }
  }
- Connections { target: bridge; function onNoticeChanged() {if(bridge.notice) notice.open()} }
+ Connections { target: bridge; function onNoticeChanged() {if(bridge.notice) notice.open(); else notice.close()} }
 }
 

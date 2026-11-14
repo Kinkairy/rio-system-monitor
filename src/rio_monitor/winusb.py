@@ -12,6 +12,11 @@ class InterfaceData(ctypes.Structure):
 class PipeInfo(ctypes.Structure):
     _fields_=[('PipeType',ctypes.c_int),('PipeId',ctypes.c_ubyte),('MaximumPacketSize',w.USHORT),('Interval',ctypes.c_ubyte)]
 
+class SetupPacket(ctypes.Structure):
+    _pack_=1
+    _fields_=[('RequestType',ctypes.c_ubyte),('Request',ctypes.c_ubyte),
+              ('Value',ctypes.c_uint16),('Index',ctypes.c_uint16),('Length',ctypes.c_uint16)]
+
 def interface_guids(key):
     """Windows drivers use either the singular REG_SZ or plural REG_MULTI_SZ."""
     import winreg
@@ -21,6 +26,10 @@ def interface_guids(key):
         except FileNotFoundError:continue
         guids.update(value if isinstance(value,list) else [value])
     return guids
+
+def supported_identity(path):
+    from .display_protocols import device_id
+    return device_id(path) in ((0x2a55,0x9990),(0xffff,0x168b))
 
 def enumerate_paths():
     if os.name!='nt':return []
@@ -32,7 +41,7 @@ def enumerate_paths():
         while True:
             try:name=winreg.EnumKey(root,i);i+=1
             except OSError:break
-            if not name.lower().startswith('vid_2a55&pid_9990'):continue
+            if not supported_identity(name):continue
             with winreg.OpenKey(root,name) as device:
                 j=0
                 while True:
@@ -65,14 +74,20 @@ def enumerate_paths():
                 ctypes.cast(buf,ctypes.POINTER(w.DWORD))[0]=8 if ctypes.sizeof(ctypes.c_void_p)==8 else 6
                 if not setup.SetupDiGetDeviceInterfaceDetailW(handle,ctypes.byref(data),buf,len(buf),ctypes.byref(needed),None):raise ctypes.WinError(ctypes.get_last_error())
                 path=ctypes.wstring_at(ctypes.addressof(buf)+4)
-                if 'vid_2a55&pid_9990' in path.lower():paths.append(path)
+                if supported_identity(path):paths.append(path)
         finally:setup.SetupDiDestroyDeviceInfoList(handle)
     return sorted(set(paths))
 
 class WinUSB:
-    def __init__(self,path):
+    endpoints=(1,0x81)
+    def __init__(self,path,*,profile='legacy'):
         if os.name!='nt':raise OSError('WinUSB requires Windows')
-        if 'vid_2a55&pid_9990' not in path.lower():raise ValueError('Unexpected device')
+        from .display_protocols import device_id
+        profiles={'legacy':((0x2a55,0x9990),(1,0x81)),
+                  'lt168b-bench':((0xffff,0x168b),(1,0x82))}
+        if profile not in profiles:raise ValueError('Unknown USB profile')
+        identity,self.endpoints=profiles[profile]
+        if device_id(path)!=identity:raise ValueError('Unexpected device')
         self.file=None;self.handle=ctypes.c_void_p()
         self.k=ctypes.WinDLL('kernel32',use_last_error=True);self.u=ctypes.WinDLL('winusb',use_last_error=True)
         self.k.CreateFileW.argtypes=[w.LPCWSTR,w.DWORD,w.DWORD,ctypes.c_void_p,w.DWORD,w.DWORD,w.HANDLE];self.k.CreateFileW.restype=w.HANDLE
@@ -95,13 +110,13 @@ class WinUSB:
                 info=PipeInfo()
                 if not self.u.WinUsb_QueryPipe(self.handle,0,index,ctypes.byref(info)):break
                 if info.PipeType==2:found.add(info.PipeId)
-            if not {1,0x81}.issubset(found):raise OSError('Expected bulk endpoints are missing')
+            if not set(self.endpoints).issubset(found):raise OSError('Expected bulk endpoints are missing')
             self.set_timeout(1500)
         except Exception:self.close();raise
     def set_timeout(self,milliseconds):
         if not 100<=milliseconds<=5000:raise ValueError('Invalid USB timeout')
         timeout=w.ULONG(milliseconds)
-        for ep in (1,0x81):
+        for ep in self.endpoints:
             if not self.u.WinUsb_SetPipePolicy(self.handle,ep,3,4,ctypes.byref(timeout)):raise ctypes.WinError(ctypes.get_last_error())
     def device_descriptor(self):
         function=self.u.WinUsb_GetDescriptor
@@ -110,19 +125,40 @@ class WinUSB:
         buf=ctypes.create_string_buffer(18);actual=w.ULONG()
         if not function(self.handle,1,0,0,buf,18,ctypes.byref(actual)):raise ctypes.WinError(ctypes.get_last_error())
         return buf.raw[:actual.value]
+    def _raise_io_error(self,api,ep,requested,reported):
+        error=ctypes.WinError(ctypes.get_last_error())
+        error.usb_api=api;error.usb_endpoint=ep
+        error.usb_requested=requested;error.usb_reported=reported
+        raise error  # The count on failure is diagnostic, never a completed transfer.
     def write(self,ep,payload):
         buf=ctypes.create_string_buffer(payload);actual=w.ULONG()
-        if not self.u.WinUsb_WritePipe(self.handle,ep,buf,len(payload),ctypes.byref(actual),None):raise ctypes.WinError(ctypes.get_last_error())
+        if not self.u.WinUsb_WritePipe(self.handle,ep,buf,len(payload),ctypes.byref(actual),None):self._raise_io_error('WinUsb_WritePipe',ep,len(payload),actual.value)
         return actual.value
     def read(self,ep,length):
         buf=ctypes.create_string_buffer(length);actual=w.ULONG()
-        if not self.u.WinUsb_ReadPipe(self.handle,ep,buf,length,ctypes.byref(actual),None):raise ctypes.WinError(ctypes.get_last_error())
+        if not self.u.WinUsb_ReadPipe(self.handle,ep,buf,length,ctypes.byref(actual),None):self._raise_io_error('WinUsb_ReadPipe',ep,length,actual.value)
+        return buf.raw[:actual.value]
+    def control(self,request_type,request,value,index,length):
+        """Bounded vendor handshake/reset used only by an explicit adapter."""
+        probe = (request_type == 0xc1 and request == 0x54 and length == 64
+                 and value in (0, 1, 2) and 0 <= index < 4096
+                 and (value != 0 or index == 0))
+        if not probe and (request_type,request,value,index,length) not in ((0xc1,0x52,0,0,32),(0x41,0x53,0,0,0)):
+            raise ValueError('Unsupported control request')
+        if self.endpoints!=(1,0x82):raise ValueError('Control protocol requires bench profile')
+        function=self.u.WinUsb_ControlTransfer
+        function.argtypes=[ctypes.c_void_p,SetupPacket,ctypes.c_void_p,w.ULONG,ctypes.POINTER(w.ULONG),ctypes.c_void_p]
+        function.restype=w.BOOL
+        setup=SetupPacket(request_type,request,value,index,length)
+        buf=ctypes.create_string_buffer(max(1,length));actual=w.ULONG()
+        if not function(self.handle,setup,buf,length,ctypes.byref(actual),None):
+            self._raise_io_error('WinUsb_ControlTransfer',0,length,actual.value)
         return buf.raw[:actual.value]
     def reset_pipes(self):
         """Recover failed synchronous I/O before closing this worker's handle."""
-        for ep in (1,0x81):
+        for ep in self.endpoints:
             if not self.u.WinUsb_ResetPipe(self.handle,ep):raise ctypes.WinError(ctypes.get_last_error())
-        if not self.u.WinUsb_FlushPipe(self.handle,0x81):raise ctypes.WinError(ctypes.get_last_error())
+        if not self.u.WinUsb_FlushPipe(self.handle,self.endpoints[1]):raise ctypes.WinError(ctypes.get_last_error())
     def close(self):
         if self.handle.value:self.u.WinUsb_Free(self.handle);self.handle=ctypes.c_void_p()
         if self.file:self.k.CloseHandle(self.file);self.file=None

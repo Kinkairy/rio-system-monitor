@@ -1,5 +1,6 @@
 import random
 import struct
+import types
 import unittest
 from unittest.mock import patch
 from PIL import Image
@@ -42,8 +43,9 @@ class USBCompatibilityTests(unittest.TestCase):
         for residue in (True,False):
             transport=Transport(residue=residue);sender=FrameSender(transport)
             self.assertEqual(sender.lcd_info(),(480,480,255))
+            query_tag=sender.tag
             for _ in range(3):sender.send(bytes(460800))
-            self.assertEqual(sender.tag,4)
+            self.assertEqual(sender.tag,(query_tag+3)&0xffffffff)
             self.assertFalse(sender.faulted)
             self.assertEqual([len(data) for data in transport.writes],[31,31,460800,31,460800,31,460800])
 
@@ -77,7 +79,7 @@ class USBCompatibilityTests(unittest.TestCase):
             def query(key,name):
                 if name not in values:raise FileNotFoundError(name)
                 return values[name],1
-            with patch('winreg.QueryValueEx',side_effect=query):
+            with patch.dict('sys.modules', {'winreg': types.SimpleNamespace(QueryValueEx=query)}):
                 expected=set()
                 for value in values.values():expected.update(value if isinstance(value,list) else [value])
                 self.assertEqual(interface_guids(object()),expected)

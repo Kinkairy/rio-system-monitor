@@ -4,10 +4,17 @@
 
 ## 当前版本与目录
 
-当前版本为 **rc0.1.19**，可从 [GitHub Release](https://github.com/Kinkairy/rio-system-monitor/releases/tag/rc0.1.19) 下载完整程序。保留 `rc0.1` 标签作为原有基准。本版继承减少托盘无用绘制、缩小温度环缓存和释放已拆分图集的 CPU/内存优化；结果与验证边界见[性能说明](docs/performance.md)。源码入口支持 `python launch.py --version`，托盘提示仅显示 RIO System Monitor。
+当前版本为 **rc0.1.20**，可从 [GitHub Release](https://github.com/Kinkairy/rio-system-monitor/releases/tag/rc0.1.20) 下载完整程序。本监控屏唯一恢复基准为 rc0.1.20 主程序配套已验收的 30780997 固件；旧标签只保留历史追溯用途。本版继承减少托盘无用绘制、缩小温度环缓存和释放已拆分图集的 CPU/内存优化；结果与验证边界见[性能说明](docs/performance.md)。源码入口支持 `python launch.py --version`，托盘提示仅显示 RIO System Monitor。
 
 当前版本包含歌词修正：移除不稳定的 QQ 桌面搜索，兼容歌手显示别名；先查播放器自身接口，获取不到再并发查询其他 QQ/网易云/酷狗/LRCLIB 接口，先取得有效同步歌词的先显示。歌名区域缩为居中的 240px，超出后往返滚动，避免遮住侧边仪表。`rc0.1` 标签保留为原有基准。修正与验证记录见[音乐模式说明](docs/music-mode.md#fix-20261023-qq-lyrics-failed-online-lyric-lookup)。
 
+
+### rc0.1.20 更新
+
+- 整理并发布已验收的 LT168B/eM133-V3 兼容、USB 接收、变化区域复制与大帧单次解码成果。屏幕固件固定为 `30780997`，未采用后续已回退的双缓冲候选。
+- 主程序逻辑、音乐动画、画质及独立模块版本保持。音乐切换卡顿仍有改进空间，本版不宣称已全部解决。
+- 公开版保持原模块下载行为。私有本地发行可在构建时设置 `RIO_NO_FANGCUN_DOWNLOAD=1`：仅禁止方寸山首次下载与更新，已安装模块和风神保持原行为；禁用策略写入包内清单且在下载底层校验。
+- 当前基准和恢复材料见 [恢复说明](docs/recovery.md)。下方旧版本记录是历史，不再构成其他有效恢复基准。
 
 ### rc0.1.19 更新
 
@@ -44,7 +51,7 @@
 
 ### rc0.1.12 更新
 
-- 实时显示连接后直接发送完整画面，省去可能卡住的屏幕信息查询；继续使用原有发送确认和自动重连。一次现场超时已在不拔插的情况下恢复，随后151帧实机发送零错误，完整程序持续刷新经用户确认；不保证所有USB故障都能软件恢复。
+- 实时显示采用原厂 CD03 初始化后发送完整画面，以对应编号的完整应答确认成功。旧的直接发帧方案已撤销；当前 USB 恢复策略及限制见下方说明。
 - 打包前合成固定图层，原图继续保留私有；代表监控/音乐帧及中英文设置显示保持一致。运行字体和动态内容保持，公开源码不包含原图或字体文件。
 - 默认构建继续精简Qt、NumPy和FFmpeg，发行附件保留完整许可材料和对应源码入口。
 
@@ -158,7 +165,7 @@ AUTOUPDATE-20261023-LIVE 追加（实现前）：用户报告开启登录启动�
 
 ## 设备与验证边界
 
-已验证的设备接口为 WinUSB `2A55:9990`，LCD 查询为 480×480。程序只接受兼容单设备和已核验的尺寸。实时监控发生 USB 故障后，等待旧句柄完全关闭，再重新枚举并连接，失败按 1、2、4、5 秒间隔重试，无需退出程序；启动时未插屏也会继续检测。重连后重新查询尺寸并发送最新画面。屏内内容写入期间及成功后的内容播放模式不抢占设备；写入失败恢复实时模式后自动重连，不自动重试擦写。正常退出停止重连。关闭其他占用屏幕的软件。
+已验证的设备接口为 WinUSB `2A55:9990`，LCD 为 480×480。连接保留 CD03 查询、完整对应编号的状态确认和 1 秒准备等待。短包累积，IN 超时最多续读两次，仅完整且编号匹配的 CSW 可完成事务；旧应答被有界丢弃，新连接不复用旧编号。不重放写操作，不以 ResetPipe/FlushPipe 冒充固件复位，不绕过初始化直接发帧。接收失败关闭后以 1、2、4、5 秒退避重新连接，间隔从失败完成后计算。不确定的命令/像素写入失败时停止新命令，提示拔插，观察设备移除并返回后再连接。持续 5 秒无成功帧才提示一次，成功帧关闭 USB 提示；其他提示保留。资源写入和板载播放不被实时输出抢占，不自动重试擦写。诊断位于 `%LOCALAPPDATA%/RIO-Monitor/logs/usb.log`，每份256 KiB加2份轮转；驱动失败计数仅为诊断，不证明已提交。首次随机超时的物理触发原因尚未捕获；有界恢复测试不等于所有硬件故障均能免拔插恢复。
 
 本地实时 RGB565 输出已经取得设备成功回包；全帧链路约 13 FPS，回包与实际显示分别验证。30 FPS 是绘制和视频转换目标，未声称实体屏达到 30 FPS。资源写入协议具有地址边界、互斥和失败停止测试，实物默认动画上传已通过逐块应答，断电重接播放新动画由用户确认。USB 文件回读、温度组件卸载/重启后的服务启动仍待验证。没有刷固件、APPLOAD 或任意地址写入入口。
 
@@ -249,3 +256,18 @@ spec 会自动调用 `tools/prepare_fixed_layers.py`，复用现有绘制代码�
 
 原代码采用 MIT 许可，私有素材和第三方依赖不因此改为 MIT。见 [第三方说明](THIRD-PARTY-NOTICES.md) 与 [发行许可、对应源码和 Qt 库替换说明](docs/distribution-licenses.md)。Qt/PySide 和 FFmpeg 的完整许可、版权及准确源入口随发行提供；以后打包会自动生成 `dist/RIO-System-Monitor-<版本>-licenses.zip` 并把材料带进 EXE。现有 rc0.1.10/11 只补充 Release 附件，不改变版本、标签或已发布的 EXE。主程序开发构建未签名；签名 PawnIO 驱动不代表 GUI 已签名。源代码测试、真实设备通信与用户视觉验收分别记录，不以其中之一代替其他结果。
 
+
+### LT168B 完整画面自动连接（2026-11-13）
+已验证的 eM133-V3 RIO 固件通过 FFFF:168B 自动发现并接入同一 DisplaySession/ScreenOutput。每次连接验证能力应答，重连后重新发送完整关键帧；原厂 EMonitor 固件仅支持数值，不能据设备品牌推断支持画面。原屏协议保持。此固件暂不支持板载媒体写入；固件烧录为独立、显式授权的维护操作，自动连接不刷固件。当前 VID/PID 是私有实测标识，不是通用型号或量产 VID 授权。
+
+### LT168B eM133-V3 screen upgrade
+
+The qualified RIO firmware (FFFF:168B, RIO1 capability handshake) connects through the same DisplaySession and renderer as the original RIO screen. Existing RIO firmware is never rewritten on insertion.
+
+Stock candidate prompts require the observed EEEF:1616 HID descriptors (LEVETOP / USB-HID, revision0100, usage1:0, interface0). These identify a candidate, not exact firmware bytes. When insertion prompts the matching eM133-V3 / LT168B profile, confirm, unplug USB, hold the bottom button while reconnecting, then release after3 seconds. The guide waits up to3 minutes. It verifies the EEEF:268A / TEST_1.0 loader identity and BOTH known original application CRCs before entering programming mode. Unknown boards or firmware are refused, never force-flashed.
+
+The package pins image fd2ec0ca (12 KiB at6000A000..6000D000) and plan dd1c93b2. Only the original exact firmware profile is accepted. It writes six2048B blocks, verifies the application CRC and unchanged following4KiB guard, then starts RIO. Bootloader and external theme storage are outside the write range. The old12KiB recovery bytes are retained in development evidence; restoration has not been physically tested. An interrupted write is recorded and never automatically retried.
+
+Independent manual entry: copy tools/Update-ScreenFirmware.ps1 beside RIO-System-Monitor.exe; close RIO, enter button-held USB boot mode, run the script without parameters to preview or with -Write for one explicit attempt. It invokes the same packaged writer and fixed image, without requiring Python or another protocol implementation. Normal RIO and the tool share the process mutex. Attempt logs are under LOCALAPPDATA/RIO-Monitor/firmware-logs.
+
+Build: set RIO_LT168B_FIRMWARE_DIR to the directory containing the externally controlled em133-v3-rio1.json. The build rejects a mismatched SHA256. Test the private profile with the same variable; general public tests skip that fixture if the private input is unavailable.

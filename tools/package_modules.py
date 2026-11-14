@@ -62,11 +62,13 @@ def build(src, runtime, name, version):
     return data.getvalue()
 
 
-def package(runtime_assets, version):
+def package(runtime_assets, version, *, disable_fangcun_download=False):
     """EXE build step: take module resources out of the runtime assets and list the hosted modules in modules.json."""
     from rio_monitor.extensions import MODULE_API
     runtime = Path(runtime_assets)
     manifest, moved = {'version': version, 'api': MODULE_API, 'modules': list(MODULES)}, set()
+    if disable_fangcun_download:
+        manifest['disabled_downloads'] = ['fangcun']
     for spec in MODULES.values():
         # The EXE keeps only host resources; image provenance sidecars leave with their image.
         for resource in spec['resources'] + spec['retired']:

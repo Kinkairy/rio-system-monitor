@@ -18,6 +18,59 @@ class BridgeTests(unittest.TestCase):
  def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
  def setUp(self):self.b=Bridge(self.app,Settings(),Weather(),Frames(),capture=True)
  def tearDown(self):self.b.save_timer.stop();self.b.storage.close()
+ def usb_state(self,error=None,sent=0,mode='monitor'):
+  return dict(mode=mode,usb_error=error,usb_sent=sent)
+ def test_brief_usb_error_recovers_without_interrupting_with_notice(self):
+  with patch.object(self.b,'tell',wraps=self.b.tell) as tell:
+   self.b.updateUsb(self.usb_state('timeout'),now=0)
+   self.b.updateUsb(self.usb_state(),now=2)
+   self.b.updateUsb(self.usb_state(sent=1),now=3)
+   tell.assert_not_called();self.assertEqual(self.b.notice,'')
+ def test_usb_notice_waits_for_ack_then_clears_and_can_report_next_episode(self):
+  with patch.object(self.b,'tell',wraps=self.b.tell) as tell:
+   self.b.updateUsb(self.usb_state('timeout'),now=0)
+   self.b.updateUsb(self.usb_state('timeout'),now=5)
+   self.assertEqual(tell.call_count,1);self.assertTrue(self.b.notice)
+   self.b.updateUsb(self.usb_state(),now=6)
+   self.assertTrue(self.b.notice);self.assertEqual(tell.call_count,1)
+   self.b.updateUsb(self.usb_state('different phase'),now=7)
+   self.assertEqual(tell.call_count,1)
+   self.b.updateUsb(self.usb_state(sent=1),now=8)
+   self.assertEqual(self.b.notice,'')
+   self.b.updateUsb(self.usb_state('timeout'),now=10)
+   self.b.updateUsb(self.usb_state('timeout'),now=15)
+   self.assertTrue(self.b.notice);self.assertEqual(tell.call_count,3)
+ def test_usb_recovery_does_not_clear_an_unrelated_notice(self):
+  self.b.updateUsb(self.usb_state('timeout'),now=0)
+  self.b.updateUsb(self.usb_state('timeout'),now=5)
+  self.b.tell('Sensors: unrelated failure')
+  self.b.updateUsb(self.usb_state(sent=1),now=6)
+  self.assertEqual(self.b.notice,'Sensors: unrelated failure')
+ def test_switching_to_stored_mode_clears_only_usb_episode(self):
+  self.b.updateUsb(self.usb_state('timeout'),now=0)
+  self.b.updateUsb(self.usb_state('timeout'),now=5)
+  self.b.updateUsb(self.usb_state(mode='stored'),now=6)
+  self.assertEqual(self.b.notice,'')
+ def test_uncertain_write_notice_requires_physical_reconnect(self):
+  self.b.setLanguage('zh');state=self.usb_state('partial write');state['usb_requires_replug']=True
+  self.b.updateUsb(state,now=0);self.b.updateUsb(state,now=5)
+  self.assertIn('拔插',self.b.notice);self.assertNotIn('自动重连',self.b.notice)
+  self.b.updateUsb(self.usb_state(sent=1),now=6);self.assertEqual(self.b.notice,'')
+ def test_replug_notice_upgrades_an_existing_reconnect_notice(self):
+  self.b.setLanguage('zh');state=self.usb_state('read timeout')
+  self.b.updateUsb(state,now=0);self.b.updateUsb(state,now=5)
+  self.assertIn('自动重连',self.b.notice)
+  state['usb_requires_replug']=True;self.b.updateUsb(state,now=6)
+  self.assertIn('拔插',self.b.notice)
+ def test_telemetry_screen_capability_notice_does_not_repeat_or_replace_other_messages(self):
+  self.b.setLanguage('zh')
+  state=self.usb_state(sent=1);state.update(usb_samples_supported=True,usb_frames_supported=False)
+  with patch.object(self.b,'tell',wraps=self.b.tell) as tell:
+   self.b.updateUsb(state,now=1);self.b.updateUsb(state,now=2)
+   self.assertEqual(tell.call_count,1);self.assertIn('监控数值',self.b.notice)
+   self.b.updateUsb(self.usb_state(sent=1),now=3);self.assertEqual(self.b.notice,'')
+   self.b.tell('Other operation failed',source='other');self.b.updateUsb(state,now=4)
+   self.assertEqual(self.b.notice,'Other operation failed')
  def test_settings_save(self):
   self.b.setLanguage('zh');self.b.setRotation(90);self.b.setAutostart(True)
   self.assertEqual(self.b.s.rotation,90);self.assertTrue(self.b.s.autostart);self.assertEqual(self.b.s.language,'zh')
