@@ -8,7 +8,11 @@ permissions:
   contents: read
 jobs:
   check:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -17,11 +21,29 @@ jobs:
           python-version: '3.12'
       - name: Check public source boundary
         run: python tools/check_source_only.py
+      - name: Install Linux Qt runtime libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libopengl0 libxkbcommon0
       - name: Install source test dependencies
         run: python -m pip install -r requirements-build.txt
-      - name: Source tests (private-art tests explicitly skipped)
+      - name: Source tests (Linux includes native firmware harnesses)
         env:
           PYTHONPATH: src
           QT_QPA_PLATFORM: offscreen
-        run: python -m unittest discover -s tests -v
+          QT_QUICK_BACKEND: software
+        shell: python
+        run: |
+          import pathlib, sys, unittest
+          loader = unittest.TestLoader()
+          if sys.platform == 'win32':
+              # LT168B native harnesses require Linux non-PIE/32-bit MMIO addresses.
+              # The Linux job runs those files in full, including their host checks.
+              sys.path.insert(0, 'tests')
+              modules = [p.stem for p in sorted(pathlib.Path('tests').glob('test_*.py'))
+                         if not p.name.startswith('test_lt168b_')]
+              suite = loader.loadTestsFromNames(modules)
+          else:
+              suite = loader.discover('tests')
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          raise SystemExit(not result.wasSuccessful())
       # No private asset checkout, screenshots, packaged EXE, or public artifacts.
