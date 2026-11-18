@@ -12,6 +12,10 @@
 
 主程序始终以普通权限运行。服务自动启动，在系统权限下使用 LibreHardwareMonitor 0.9.6 读取 CPU 温度；不启用主板、风扇、存储或显卡控制。GPU 使用 Windows DXGI/PDH 跟随实际活动显卡，不循环切换，不显示 GPU 温度。支持 Windows x64；本机现有 .NET Framework 用于组件，无另装 .NET Runtime 流程。
 
+RIO 温度服务和已有 WMI 接口都按每颗 CPU 选择实际温度。Intel 优先使用 CPU Package，AMD 优先使用 Tdie 或 Tctl/Tdie。缺少包温时使用可识别的核心或芯片温度。多路系统显示所选读数中最高的一颗。距温度上限的余量（Distance to TjMax）属于温差，不能作为 CPU 温度。服务结果的 `sensor` 字段记录实际选中的传感器名称。
+
+从旧版本升级后，设置中的“温度监控”会显示“更新温度组件”。点击后确认 Windows 管理员提示即可升级已有 RIO 服务。等待期间主程序不会把旧组件的温度余量显示为 CPU 温度。使用已有 WMI 接口的电脑由随包读取程序直接选取传感器。
+
 ## 文件和权限
 
 - 服务名：`RIOHardwareMonitor`。服务、依赖库安装在 `%ProgramFiles%/RIO-Monitor/Temperature/`，普通用户只有读取和运行权限。
