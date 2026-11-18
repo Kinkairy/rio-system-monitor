@@ -4,7 +4,7 @@
 
 ## 当前版本与目录
 
-当前版本为 **rc0.1.20**，可从 [GitHub Release](https://github.com/Kinkairy/rio-system-monitor/releases/tag/rc0.1.20) 下载完整程序。本监控屏唯一恢复基准为 rc0.1.20 主程序配套已验收的 30780997 固件；旧标签只保留历史追溯用途。本版继承减少托盘无用绘制、缩小温度环缓存和释放已拆分图集的 CPU/内存优化；结果与验证边界见[性能说明](docs/performance.md)。源码入口支持 `python launch.py --version`，托盘提示仅显示 RIO System Monitor。
+当前主程序源码版本为 **rc0.1.21**。连接兼容 USB 小屏时，RIO 根据设备声明选择协议，完成握手后开始投射。重新插入屏幕后会恢复连接。对应型号的发行程序沿用现有固件更新入口，能安装原版 RIO 启动动画。Windows 文件属性与程序内显示相同的版本。
 
 当前版本包含歌词修正：移除不稳定的 QQ 桌面搜索，兼容歌手显示别名；先查播放器自身接口，获取不到再并发查询其他 QQ/网易云/酷狗/LRCLIB 接口，先取得有效同步歌词的先显示。歌名区域缩为居中的 240px，超出后往返滚动，避免遮住侧边仪表。`rc0.1` 标签保留为原有基准。修正与验证记录见[音乐模式说明](docs/music-mode.md#fix-20261023-qq-lyrics-failed-online-lyric-lookup)。
 
@@ -167,7 +167,7 @@ AUTOUPDATE-20261023-LIVE 追加（实现前）：用户报告开启登录启动�
 
 已验证的设备接口为 WinUSB `2A55:9990`，LCD 为 480×480。连接保留 CD03 查询、完整对应编号的状态确认和 1 秒准备等待。短包累积，IN 超时最多续读两次，仅完整且编号匹配的 CSW 可完成事务；旧应答被有界丢弃，新连接不复用旧编号。不重放写操作，不以 ResetPipe/FlushPipe 冒充固件复位，不绕过初始化直接发帧。接收失败关闭后以 1、2、4、5 秒退避重新连接，间隔从失败完成后计算。不确定的命令/像素写入失败时停止新命令，提示拔插，观察设备移除并返回后再连接。持续 5 秒无成功帧才提示一次，成功帧关闭 USB 提示；其他提示保留。资源写入和板载播放不被实时输出抢占，不自动重试擦写。诊断位于 `%LOCALAPPDATA%/RIO-Monitor/logs/usb.log`，每份256 KiB加2份轮转；驱动失败计数仅为诊断，不证明已提交。首次随机超时的物理触发原因尚未捕获；有界恢复测试不等于所有硬件故障均能免拔插恢复。
 
-本地实时 RGB565 输出已经取得设备成功回包；全帧链路约 13 FPS，回包与实际显示分别验证。30 FPS 是绘制和视频转换目标，未声称实体屏达到 30 FPS。资源写入协议具有地址边界、互斥和失败停止测试，实物默认动画上传已通过逐块应答，断电重接播放新动画由用户确认。USB 文件回读、温度组件卸载/重启后的服务启动仍待验证。没有刷固件、APPLOAD 或任意地址写入入口。
+本地实时 RGB565 输出已经取得设备成功回包；全帧链路约 13 FPS，回包与实际显示分别验证。30 FPS 是绘制和视频转换目标，未声称实体屏达到 30 FPS。资源写入协议具有地址边界、互斥和失败停止测试，实物默认动画上传已通过逐块应答，断电重接播放新动画由用户确认。USB 文件回读、温度组件卸载/重启后的服务启动仍待验证。对应型号的固件更新使用下方单独的确认流程。
 
 ## 源码与私有素材
 
@@ -260,14 +260,8 @@ spec 会自动调用 `tools/prepare_fixed_layers.py`，复用现有绘制代码�
 ### LT168B 完整画面自动连接（2026-11-13）
 已验证的 eM133-V3 RIO 固件通过 FFFF:168B 自动发现并接入同一 DisplaySession/ScreenOutput。每次连接验证能力应答，重连后重新发送完整关键帧；原厂 EMonitor 固件仅支持数值，不能据设备品牌推断支持画面。原屏协议保持。此固件暂不支持板载媒体写入；固件烧录为独立、显式授权的维护操作，自动连接不刷固件。当前 VID/PID 是私有实测标识，不是通用型号或量产 VID 授权。
 
-### LT168B eM133-V3 screen upgrade
+### eM133-V3 屏幕固件更新
 
-The qualified RIO firmware (FFFF:168B, RIO1 capability handshake) connects through the same DisplaySession and renderer as the original RIO screen. Existing RIO firmware is never rewritten on insertion.
+连接匹配的 eM133-V3 时，发行程序会提供固件更新。按界面提示确认并操作屏幕按键。主程序会核对型号与固件，备份并校验 588 KiB 保护区，读回动画数据，最后启用播放器。已在正常投射的屏幕可直接更新电脑程序。
 
-Stock candidate prompts require the observed EEEF:1616 HID descriptors (LEVETOP / USB-HID, revision0100, usage1:0, interface0). These identify a candidate, not exact firmware bytes. When insertion prompts the matching eM133-V3 / LT168B profile, confirm, unplug USB, hold the bottom button while reconnecting, then release after3 seconds. The guide waits up to3 minutes. It verifies the EEEF:268A / TEST_1.0 loader identity and BOTH known original application CRCs before entering programming mode. Unknown boards or firmware are refused, never force-flashed.
-
-The package pins image fd2ec0ca (12 KiB at6000A000..6000D000) and plan dd1c93b2. Only the original exact firmware profile is accepted. It writes six2048B blocks, verifies the application CRC and unchanged following4KiB guard, then starts RIO. Bootloader and external theme storage are outside the write range. The old12KiB recovery bytes are retained in development evidence; restoration has not been physically tested. An interrupted write is recorded and never automatically retried.
-
-Independent manual entry: copy tools/Update-ScreenFirmware.ps1 beside RIO-System-Monitor.exe; close RIO, enter button-held USB boot mode, run the script without parameters to preview or with -Write for one explicit attempt. It invokes the same packaged writer and fixed image, without requiring Python or another protocol implementation. Normal RIO and the tool share the process mutex. Attempt logs are under LOCALAPPDATA/RIO-Monitor/firmware-logs.
-
-Build: set RIO_LT168B_FIRMWARE_DIR to the directory containing the externally controlled em133-v3-rio1.json. The build rejects a mismatched SHA256. Test the private profile with the same variable; general public tests skip that fixture if the private input is unavailable.
+桌面升级流程和离线测试在本仓维护。构建含动画的发行包需要通过 `RIO_LT168B_FIRMWARE_DIR` 提供配套固件输入。该机型的启动动画长 7.2 秒，共 216 帧。公开 Git 树只同步主程序源码和文档，方寸山、风神等独立模块源码和美术资源由各自的私有项目维护。

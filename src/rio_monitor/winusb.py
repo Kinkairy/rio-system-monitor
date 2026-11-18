@@ -28,13 +28,52 @@ def interface_guids(key):
     return guids
 
 def supported_identity(path):
-    from .display_protocols import device_id
-    return device_id(path) in ((0x2a55,0x9990),(0xffff,0x168b))
+    from .display_protocols import device_id, rio_frame_interface
+    return device_id(path) == (0x2a55,0x9990) or rio_frame_interface(path)
+
+class DevicePropertyKey(ctypes.Structure):
+    _fields_ = [('fmtid', GUID), ('pid', w.DWORD)]
+
+
+def device_arrival(path):
+    """LastArrivalDate of the device behind a live interface, when Windows supplies it."""
+    if os.name != 'nt':
+        return None
+    try:
+        cfg = ctypes.windll.cfgmgr32
+        interface_property = cfg.CM_Get_Device_Interface_PropertyW
+        locate = cfg.CM_Locate_DevNodeW
+        node_property = cfg.CM_Get_DevNode_PropertyW
+    except (AttributeError, OSError):
+        return None
+    prop_args = [ctypes.POINTER(DevicePropertyKey), ctypes.POINTER(w.ULONG),
+                 ctypes.c_void_p, ctypes.POINTER(w.ULONG), w.ULONG]
+    interface_property.argtypes = [w.LPCWSTR, *prop_args]
+    locate.argtypes = [ctypes.POINTER(w.ULONG), w.LPCWSTR, w.ULONG]
+    node_property.argtypes = [w.ULONG, *prop_args]
+    instance_key = DevicePropertyKey(GUID.parse('78c34fc8-104a-4aca-9ea4-524d52996e57'), 256)
+    arrival_key = DevicePropertyKey(GUID.parse('83da6326-97a6-4088-9453-a1923f573b29'), 102)
+    instance = ctypes.create_unicode_buffer(200)  # MAX_DEVICE_ID_LEN
+    kind, size = w.ULONG(), w.ULONG(ctypes.sizeof(instance))
+    if interface_property(path, ctypes.byref(instance_key), ctypes.byref(kind), instance,
+                          ctypes.byref(size), 0) or kind.value != 0x12:  # DEVPROP_TYPE_STRING
+        return None
+    node = w.ULONG()
+    if locate(ctypes.byref(node), instance.value, 0):
+        return None
+    arrival = ctypes.c_uint64()
+    size = w.ULONG(ctypes.sizeof(arrival))
+    if node_property(node, ctypes.byref(arrival_key), ctypes.byref(kind), ctypes.byref(arrival),
+                     ctypes.byref(size), 0) or kind.value != 0x10 or size.value != 8:  # FILETIME
+        return None
+    return arrival.value or None
+
 
 def enumerate_paths():
     if os.name!='nt':return []
     import winreg
-    guids=set()
+    from .display_protocols import RIO_FRAME_GUID
+    guids={RIO_FRAME_GUID}
     base=r'SYSTEM\CurrentControlSet\Enum\USB'
     with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,base) as root:
         i=0
@@ -49,7 +88,7 @@ def enumerate_paths():
                     except OSError:break
                     try:
                         with winreg.OpenKey(device,instance+r'\Device Parameters') as key:
-                            guids.update(interface_guids(key))
+                            guids.update(text.lower() for text in interface_guids(key))
                     except FileNotFoundError:pass
     setup=ctypes.WinDLL('setupapi',use_last_error=True)
     setup.SetupDiGetClassDevsW.argtypes=[ctypes.POINTER(GUID),w.LPCWSTR,w.HWND,w.DWORD];setup.SetupDiGetClassDevsW.restype=w.HANDLE
@@ -82,12 +121,16 @@ class WinUSB:
     endpoints=(1,0x81)
     def __init__(self,path,*,profile='legacy'):
         if os.name!='nt':raise OSError('WinUSB requires Windows')
-        from .display_protocols import device_id
-        profiles={'legacy':((0x2a55,0x9990),(1,0x81)),
-                  'lt168b-bench':((0xffff,0x168b),(1,0x82))}
-        if profile not in profiles:raise ValueError('Unknown USB profile')
-        identity,self.endpoints=profiles[profile]
-        if device_id(path)!=identity:raise ValueError('Unexpected device')
+        from .display_protocols import device_id, rio_frame_interface
+        if profile == 'legacy':
+            qualified = device_id(path) == (0x2a55,0x9990) and not rio_frame_interface(path)
+            self.endpoints = (1,0x81)
+        elif profile == 'lt168b-bench':
+            qualified = rio_frame_interface(path)
+            self.endpoints = (1,0x82)
+        else:
+            raise ValueError('Unknown USB profile')
+        if not qualified:raise ValueError('Unexpected device')
         self.file=None;self.handle=ctypes.c_void_p()
         self.k=ctypes.WinDLL('kernel32',use_last_error=True);self.u=ctypes.WinDLL('winusb',use_last_error=True)
         self.k.CreateFileW.argtypes=[w.LPCWSTR,w.DWORD,w.DWORD,ctypes.c_void_p,w.DWORD,w.DWORD,w.HANDLE];self.k.CreateFileW.restype=w.HANDLE
@@ -143,7 +186,11 @@ class WinUSB:
         probe = (request_type == 0xc1 and request == 0x54 and length == 64
                  and value in (0, 1, 2) and 0 <= index < 4096
                  and (value != 0 or index == 0))
-        if not probe and (request_type,request,value,index,length) not in ((0xc1,0x52,0,0,32),(0x41,0x53,0,0,0)):
+        maintenance = value == 0xb201 and (
+            (request_type,request,index,length) in ((0xc0,0x57,0,64),(0x40,0x59,0,0))
+            or (request_type,request,length)==(0xc0,0x58,4096) and 0<=index<147
+            or request_type==0x40 and request in (0x5a,0x5b) and length==0 and 0<=index<333)
+        if not maintenance and not probe and (request_type,request,value,index,length) not in ((0xc1,0x52,0,0,32),(0x41,0x53,0,0,0)):
             raise ValueError('Unsupported control request')
         if self.endpoints!=(1,0x82):raise ValueError('Control protocol requires bench profile')
         function=self.u.WinUsb_ControlTransfer

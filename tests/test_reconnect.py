@@ -149,6 +149,52 @@ class ReconnectTests(unittest.TestCase):
         session.reconnect(11);self.assertEqual(len(created),2);self.assertTrue(old.closed)
         self.assertTrue(session.close())
 
+    def test_interrupted_legacy_screen_returns_only_as_lt168b(self):
+        from rio_monitor.display_protocols import capabilities_for
+        legacy = r'usb#vid_2a55&pid_9990#port6'
+        bench = r'usb#vid_ffff&pid_168b#port6'
+        old = Writer(legacy)
+        old.error = 'frame.pixels: WinError 31'
+        old.requires_replug = True
+        old.finished.set()
+        paths = [legacy]
+        factory = Mock(side_effect=Writer)
+        session = DisplaySession(enumerator=lambda: list(paths), output_factory=factory)
+        session.output = old
+        session.reconnect(0)
+        paths[:] = [legacy, bench]
+        session.reconnect(1)
+        factory.assert_not_called()
+        paths[:] = [bench]
+        session.reconnect(2)
+        session.reconnect(4)
+        factory.assert_called_once_with(bench)
+        self.assertTrue(old.closed)
+        self.assertEqual(capabilities_for(session.output.path).protocol, 'lt168b-rio-bench')
+        self.assertTrue(session.close())
+
+    def test_fast_replug_at_same_path_requires_a_new_windows_arrival(self):
+        path = 'same-interface'
+        old = Writer(path)
+        old.error = 'partial OUT'
+        old.requires_replug = True
+        old.device_arrival = 100
+        old.finished.set()
+        factory = Mock(side_effect=Writer)
+        session = DisplaySession(enumerator=lambda: [path], output_factory=factory)
+        session.output = old
+        with patch('rio_monitor.winusb.device_arrival', create=True) as arrival:
+            for now, observed in enumerate((None, 100, 100)):
+                arrival.return_value = observed
+                session.reconnect(now)
+                factory.assert_not_called()
+            arrival.return_value = 200
+            session.reconnect(4)
+            session.reconnect(6)
+        factory.assert_called_once_with(path)
+        self.assertTrue(old.closed)
+        self.assertTrue(session.close())
+
     def test_uncertain_out_waits_for_device_removal_before_new_commands(self):
         old=Writer('device');old.error='partial OUT';old.requires_replug=True;old.finished.set()
         paths=['device'];factory=Mock(side_effect=Writer)

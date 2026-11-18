@@ -3,11 +3,26 @@
 Firmware is an external, SHA-pinned build input. Discovery never arms writing.
 The original loader/profile must match before any programming-mode command.
 """
-import datetime,hashlib,json,sys,threading,time
+import datetime,hashlib,json,os,sys,threading,time
 from pathlib import Path
+from . import firmware_segments as segments
+from . import firmware_animation, firmware_release
 
 PLAN_SHA='a077ac68c9fd06f003ef6b513c038f35c6cc1a8003fcb8c0fa6869b950a2e40a'
 IMAGE_SHA='30780997a3baf2d0002462443c3922f4d54997f1b6e7929c8e80b15a15883a9a'
+
+def save_journal(path,journal):
+    temp=path.with_name(path.name+'.new')
+    with temp.open('w',encoding='utf-8') as log:
+        json.dump(journal,log,indent=2)
+        log.flush()
+        os.fsync(log.fileno())
+    os.replace(temp,path)
+
+def run_segments(port,package,install,journal,record,progress=lambda value:None):
+    device=segments.RioLoader(port)
+    journal['transport']=device.counts
+    return segments.update(device,package,install,record,progress)
 
 def load_plan(folder):
     raw=(Path(folder)/'em133-v3-rio1.json').read_bytes()
@@ -99,7 +114,8 @@ class FirmwareUpdate:
         self.session=session;self.folder=Path(folder);self.logs=Path(log_folder)
         self.ports=ports;self.opener=opener;self.detector=detector;self.lock=threading.RLock()
         self.thread=None;self.cancel_event=threading.Event();self.offered=False;self.offered_generation=None
-        self.data=dict(state='idle',progress=0.,error='',busy=False)
+        self.segment_package=None
+        self.data=dict(state='idle',progress=0.,error='',busy=False,segmented=False)
     def snapshot(self):
         with self.lock:return dict(self.data)
     def update(self,**values):
@@ -112,12 +128,27 @@ class FirmwareUpdate:
                 output=self.session.output
                 if output is None or output.path not in self.detector():return False
             except (ImportError,OSError):return False
-            self.offered=True;self.offered_generation=generation;self.update(state='available');return True
+            self.offered=True;self.offered_generation=generation
+            if (self.folder/firmware_release.FILENAME).is_file():
+                try:self.select_bundled()
+                except (OSError,ValueError) as exc:self.update(state='error',error=str(exc))
+            else:self.update(state='available')
+            return True
         return False
     def dismiss(self):
         with self.lock:
             if self.data['state']=='waiting':self.cancel_event.set()
-            elif not self.data['busy']:self.update(state='idle')
+            elif not self.data['busy']:
+                self.segment_package=None;self.update(state='idle',segmented=False)
+    def select_package(self,path):
+        self._select(firmware_release.selected(path,self.folder))
+    def select_bundled(self):
+        self._select(firmware_release.bundled(self.folder))
+    def _select(self,package):
+        with self.lock:
+            if self.data['busy']:raise RuntimeError('An upgrade is already active')
+            self.segment_package=package
+            self.update(state='available',progress=0.,error='',segmented=True)
     def start(self):
         with self.lock:
             if self.data['busy'] or self.data['state']!='available':return False
@@ -128,7 +159,8 @@ class FirmwareUpdate:
     def _run(self):
         port=None;owned=False;path=None;journal=dict(events=[],error=None)
         try:
-            plan=load_plan(self.folder)
+            package=self.segment_package
+            plan=None if package else load_plan(self.folder)
             # Freeze the same session owner before any bootloader handle opens.
             with self.session.lock:
                 if self.session.resource_active or self.session.stop.is_set():raise RuntimeError('Display is busy or closing')
@@ -149,17 +181,28 @@ class FirmwareUpdate:
             if self.cancel_event.is_set():self.update(state='cancelled');return
             self.logs.mkdir(parents=True,exist_ok=True)
             path=self.logs/('em133-'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')+'.json')
-            journal.update(plan_sha256=PLAN_SHA,image_sha256=IMAGE_SHA,port=ports[0])
+            journal['port']=ports[0]
+            if package:journal.update(package.describe())
+            else:journal.update(plan_sha256=PLAN_SHA,image_sha256=IMAGE_SHA)
             def record(item):
                 journal['events'].append(item)
-                path.write_text(json.dumps(journal,indent=2))
+                save_journal(path,journal)
             port=self.opener(ports[0])
             # Disable cancellation/exit before the bounded handshake+write phase.
             with self.lock:
                 if self.cancel_event.is_set():self.update(state='cancelled');return
                 self.update(state='writing')
-            program(port,plan,record,lambda p:self.update(progress=p))
-            self.update(state='done')
+            if isinstance(package,firmware_release.Release):
+                io=firmware_animation.Connections(self.ports,self.opener,self.session.paths)
+                journal['result']=firmware_animation.run(
+                    port,package,self.logs/'backups',True,record,
+                    lambda state,p:self.update(state=state,progress=p),io)
+            elif package:
+                journal['result']=run_segments(port,package,True,journal,record,lambda p:self.update(progress=p))
+            else:program(port,plan,record,lambda p:self.update(progress=p))
+            self.update(state='current' if journal.get('result')=='already_installed_and_verified' else 'done',progress=1.)
+        except segments.EraseScopeUnknown as exc:
+            journal.update(error=str(exc),result='erase_scope_unproven');self.update(state='scope_unknown',error='')
         except Exception as exc:
             journal['error']=str(exc);self.update(state='error',error=str(exc))
         finally:
@@ -168,7 +211,7 @@ class FirmwareUpdate:
                 except OSError as exc:
                     journal['error']=str(exc);self.update(state='error',error=str(exc))
             if path:
-                try:path.write_text(json.dumps(journal,indent=2))
+                try:save_journal(path,journal)
                 except OSError:pass
             if owned:
                 with self.session.lock:
@@ -176,7 +219,7 @@ class FirmwareUpdate:
             self.update(busy=False)
     def close(self):
         with self.lock:
-            if self.data['state']=='writing':return False
+            if self.data['state']=='writing' or self.data['busy'] and self.data['state']!='waiting':return False
             self.cancel_event.set()
         if self.thread:self.thread.join(2)
         return not self.thread or not self.thread.is_alive()
@@ -188,27 +231,64 @@ def main(argv=None):
     p=argparse.ArgumentParser(description='Manual eM133-V3 upgrade. Close RIO; hold bottom button while reconnecting USB, release after 3 seconds.')
     p.add_argument('--firmware-dir',type=Path,default=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'firmware')
     p.add_argument('--write-em133-v3',action='store_true',help='Explicitly authorize one 12 KiB write after original-firmware checks')
+    source=p.add_mutually_exclusive_group()
+    source.add_argument('--segmented-package',type=Path,help='A RIO release ZIP; preview offline by default')
+    source.add_argument('--bundled-animation',action='store_true',help='Use the startup firmware built into RIO')
+    action=p.add_mutually_exclusive_group()
+    action.add_argument('--check-segments',action='store_true',help='Read physical checksums, then return to the current application')
+    action.add_argument('--install-segments',action='store_true',help='Install only if all required erase windows are physically qualified')
     p.add_argument('--journal',type=Path,required=True)
     args=p.parse_args(argv)
-    if args.journal.exists():raise SystemExit('Journal exists; do not replay a consumed attempt')
+    if ((args.check_segments or args.install_segments) and not (args.segmented_package or args.bundled_animation)
+            or args.write_em133_v3 and (args.segmented_package or args.bundled_animation)):
+        p.error('Select exactly one firmware workflow')
+    try:
+        with args.journal.open('x') as reservation:reservation.write('{}')
+    except FileExistsError:
+        raise SystemExit('Journal exists; do not replay a consumed attempt')
     journal=dict(events=[],error=None,write_requested=args.write_em133_v3,plan_sha256=PLAN_SHA)
     def record(item):
-        journal['events'].append(item);args.journal.write_text(json.dumps(journal,indent=2))
+        journal['events'].append(item);save_journal(args.journal,journal)
     try:
+        package=None
+        built_in=(args.firmware_dir/firmware_release.FILENAME).is_file()
+        if args.bundled_animation or args.write_em133_v3 and built_in:
+            package=firmware_release.bundled(args.firmware_dir)
+        elif args.segmented_package:
+            package=firmware_release.selected(args.segmented_package,args.firmware_dir)
+        if package is not None:
+            journal.pop('plan_sha256')
+            journal.update(package.describe(),write_requested=args.install_segments or args.write_em133_v3)
+            if not (args.check_segments or journal['write_requested']):
+                journal['result']='package_verified_offline'
+                return 0
         # The exact same process mutex prevents an independent manual writer
         # competing with the running main application.
         instance=acquire_instance()
         if instance is None:raise RuntimeError('Close RIO before using the manual firmware tool')
-        plan=load_plan(args.firmware_dir);ports=boot_ports()
+        plan=None if package is not None else load_plan(args.firmware_dir)
+        ports=boot_ports()
         if len(ports)!=1 or enumerate_paths():raise RuntimeError('Connect only one screen, already in upgrade mode')
         journal['port']=ports[0]
-        if args.write_em133_v3:
+        if isinstance(package,firmware_release.Release):
+            io=firmware_animation.Connections(boot_ports,open_port,enumerate_paths)
+            from .settings import config_path
+            backups=config_path().parent/'firmware-logs'/'backups'
+            with open_port(ports[0]) as port:
+                journal['result']=firmware_animation.run(port,package,backups,journal['write_requested'],
+                                                         record,lambda state,p:None,io)
+        elif args.segmented_package:
+            with open_port(ports[0]) as port:
+                journal['result']=run_segments(port,package,args.install_segments,journal,record)
+        elif args.write_em133_v3:
             with open_port(ports[0]) as port:program(port,plan,record)
             journal['result']='verified_and_started'
         else:journal['result']='preview_only_no_device_commands'
+    except segments.EraseScopeUnknown as exc:
+        journal.update(error=str(exc),result='erase_scope_unproven')
     except Exception as exc:
         journal['error']=str(exc);journal['result']='stopped'
-    finally:args.journal.write_text(json.dumps(journal,indent=2))
+    finally:save_journal(args.journal,journal)
     return 1 if journal['error'] else 0
 
 if __name__=='__main__':raise SystemExit(main())

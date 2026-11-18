@@ -3,7 +3,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from .protocol import FrameSender
 from .display_protocols import create_protocol,LEGACY
-from .winusb import WinUSB
+from .winusb import WinUSB, device_arrival
 logger=logging.getLogger('rio_monitor.usb')
 
 def configure_usb_logging(folder):
@@ -52,7 +52,9 @@ class ScreenOutput:
         try:
             # The adapter owns initialization; never bypass a failed handshake.
             driver.open(self.path)
+            self.device_arrival = device_arrival(self.path)
             phase='initialization';driver.initialize()
+            logger.info('Display initialized; protocol=%s', driver.capabilities.protocol)
             delay=driver.capabilities.startup_delay if self.initialization_delay is None else self.initialization_delay
             if delay and self.stop.wait(delay):return
             next_send=0

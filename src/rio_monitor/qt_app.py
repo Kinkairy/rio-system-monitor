@@ -63,9 +63,20 @@ class Bridge(QObject):
  firmwareError=Property(str,lambda self:self.firmware.snapshot()['error'],notify=firmwareChanged)
  @Slot()
  def requestFirmware(self):
-  if self.storage.session.snapshot()['usb_protocol']=='lt168b-rio-bench':
-   self.tell('此屏幕已支持 RIO 完整画面，无需再次写入固件。' if self.s.language=='zh' else 'RIO firmware is already installed; no rewrite is needed.');return
-  if not self.firmware.snapshot()['busy']:self.firmware.update(state='available',error='');self.firmwareChanged.emit()
+  if self.capture or self.firmware.snapshot()['busy']:return
+  try:self.firmware.select_bundled()
+  except (OSError,ValueError) as exc:self.tell(str(exc));return
+  self.firmwareChanged.emit()
+ firmwareSegmented=Property(bool,lambda self:self.firmware.snapshot()['segmented'],notify=firmwareChanged)
+ @Slot()
+ def chooseFirmwarePackage(self):
+  if self.capture or self.firmware.snapshot()['busy']:return
+  zh=self.s.language=='zh'
+  path,_=QFileDialog.getOpenFileName(None,'选择屏幕固件包' if zh else 'Select screen firmware package','','RIO firmware (*.zip)')
+  if path:
+   try:self.firmware.select_package(path)
+   except (OSError,ValueError) as exc:self.tell(str(exc));return
+   self.firmwareChanged.emit()
  @Slot()
  def startFirmware(self):
   if self.capture:return

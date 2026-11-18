@@ -134,6 +134,40 @@ class DisplayProtocolTests(unittest.TestCase):
             with self.assertRaises(UncertainDisplayIO):adapter.send(self.samples())
             self.assertEqual(dev.write.call_count,1);dev.read.assert_not_called();adapter.close()
 
+    def test_new_model_negotiates_rio1_by_interface_and_validated_hello(self):
+        import zlib
+        from rio_monitor.display_protocols import RIO_FRAME_GUID
+        from rio_monitor.lt168b_display import HELLO, LT168BBenchProtocol
+        from rio_monitor.winusb import supported_identity
+        path = r'\\?\USB#VID_4321&PID_BEEF#new-model#' + RIO_FRAME_GUID.upper()
+        self.assertTrue(supported_identity(path))
+        adapter = create_protocol(path)
+        self.assertIsInstance(adapter, LT168BBenchProtocol)
+        self.assertTrue(capabilities_for(path).frames)
+        transport = Mock()
+        adapter.transport_factory = lambda candidate: transport if candidate == path else None
+        adapter.open(path)
+        hello = HELLO.pack(b'RIO1', 1, 32, 480, 480, 32, 16, 7, 8218, 460800, 0)[:-4]
+        transport.control.side_effect = [hello + struct.pack('<I', zlib.crc32(hello)), b'']
+        adapter.initialize()
+        self.assertTrue(adapter.ready)
+        self.assertEqual(transport.control.call_args_list[0].args, (0xc1, 0x52, 0, 0, 32))
+        transport.write.assert_not_called()
+        adapter.close()
+
+        transport.reset_mock()
+        transport.control.side_effect = [b'unknown protocol']
+        adapter.open(path)
+        with self.assertRaises(UnsupportedDisplay):
+            adapter.initialize()
+        transport.reset_pipes.assert_not_called()
+        transport.write.assert_not_called()
+        adapter.close()
+        for other in (path.replace('USB#', 'HID#'), path.replace(RIO_FRAME_GUID.upper(), '{other}')):
+            self.assertFalse(supported_identity(other))
+            with self.assertRaises(UnsupportedDisplay):
+                capabilities_for(other)
+
     def test_registry_filters_other_devices_and_preserves_legacy_enumeration(self):
         hid=Mock();hid.enumerate.return_value=[dict(path=PATH.encode(),manufacturer_string='LEVETOP',usage_page=1,usage=0),dict(path=b'keyboard',manufacturer_string='LEVETOP',usage_page=1,usage=6)]
         with patch.dict(sys.modules,{'hid':hid}),patch('rio_monitor.winusb.enumerate_paths',return_value=['legacy']):

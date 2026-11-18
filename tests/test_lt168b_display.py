@@ -47,9 +47,10 @@ class NativeTransport:
             data = ctypes.create_string_buffer(32)
             self.lib.rio_usb_hello(data)
             raw = bytearray(data.raw)
-            if not self.compression:
-                struct.pack_into('<I', raw, 16, 1)
-                struct.pack_into('<I', raw, 28, zlib.crc32(raw[:28]))
+            # This fixture represents the retained capability1/3 receiver.
+            struct.pack_into('<I', raw, 16, 3 if self.compression else 1)
+            struct.pack_into('<I', raw, 20, 1048)
+            struct.pack_into('<I', raw, 28, zlib.crc32(raw[:28]))
             return b'wrong' if self.fault == 'hello' else bytes(raw)
         if request == 0x53:
             self.reset_pipes()

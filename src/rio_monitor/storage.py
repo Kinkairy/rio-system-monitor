@@ -33,10 +33,9 @@ class DisplaySession:
             if output and not output.finished.is_set():return
             if self.retiring and not self.retiring.finished.is_set():return
             if output and getattr(output,'requires_replug',False):
-                try:present=output.path in self.paths()
+                try:ready=self._ready_after_replug(output)
                 except OSError:return
-                if not present:self._note_absence();self._saw_removal=True;return
-                if not self._saw_removal:return
+                if not ready:return
             if output and self._failed_output is not output:
                 self._failed_output=output
                 self.retry_at=now+self.retry_delay;self.retry_delay=min(5,self.retry_delay*2)
@@ -54,6 +53,21 @@ class DisplaySession:
         return enumerate_paths()
     def _note_absence(self):
         if not self._observed_absence:self.attachment_generation+=1;self._observed_absence=True
+    def _ready_after_replug(self, output):
+        paths = self.paths()
+        if not self._saw_removal:
+            old_present = any(path.lower() == output.path.lower() for path in paths)
+            if old_present:
+                # A quick removal and return can fall between polls at the same path.
+                from .winusb import device_arrival
+                opened = getattr(output, 'device_arrival', None)
+                current = device_arrival(output.path) if opened is not None else None
+                if current is None or current == opened:
+                    return False
+            self._note_absence()
+            self._saw_removal = True
+        # The same screen may re-enumerate under an entirely different protocol.
+        return len(paths) == 1
     def one_path(self):
         paths=self.paths()
         if not paths:self._note_absence()
@@ -83,8 +97,9 @@ class DisplaySession:
             if self.stop.is_set():raise RuntimeError('Display session is closed')
             if self.mode=='firmware':raise RuntimeError('Screen firmware upgrade is active')
             if self.resource_active:raise RuntimeError('Resource transfer is active')
-            if self.output and getattr(self.output,'requires_replug',False) and not self._saw_removal:
-                raise RuntimeError('USB write outcome uncertain; reconnect the screen cable / 请拔插圆屏 USB 后重试')
+            if self.output and getattr(self.output, 'requires_replug', False):
+                if not self._ready_after_replug(self.output):
+                    raise RuntimeError('USB write outcome uncertain; reconnect the screen cable / 请拔插圆屏 USB 后重试')
             self.mode='monitor'  # Keep retrying if a requested live recovery finds no device yet.
             if self.retiring:
                 if not self.retiring.close():raise RuntimeError('Previous USB writer has not stopped')

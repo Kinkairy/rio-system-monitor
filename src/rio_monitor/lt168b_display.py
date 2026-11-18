@@ -1,13 +1,13 @@
-"""Full-frame adapter for the physically qualified RIO LT168B firmware.
+"""Full-frame adapter for devices that implement the RIO1 wire protocol.
 
-The stock EMonitor firmware is incompatible. Require the bench identity AND
-validated capability reply before resetting or sending any pixels.
+Require the designated interface or legacy bench identity, then validate the
+capability reply before resetting the stream or sending any pixels.
 """
 import secrets
 import struct
 import zlib
 
-from .display_protocols import Capabilities, UnsupportedDisplay, device_id
+from .display_protocols import Capabilities, UnsupportedDisplay, rio_frame_interface
 from .lt168b_stream import encode_frame
 from .protocol import encode_rgb565
 
@@ -20,8 +20,9 @@ def validate_hello(data):
     if len(data) != HELLO.size:
         raise UnsupportedDisplay('Invalid capability length')
     fields = HELLO.unpack(data)
-    expected = (b'RIO1', 1, 32, 480, 480, 32, 16, fields[7], 1048, 460800)
-    if fields[7] not in (1, 3) or fields[:-1] != expected:
+    expected = (b'RIO1', 1, 32, 480, 480, 32, 16, fields[7],
+                8218 if fields[7] == 7 else 1048, 460800)
+    if fields[7] not in (1, 3, 7) or fields[:-1] != expected:
         raise UnsupportedDisplay('Device does not support the RIO full-frame protocol')
     if HELLO.unpack(data)[-1] != zlib.crc32(data[:-4]):
         raise UnsupportedDisplay('Corrupt full-frame capability reply')
@@ -43,8 +44,8 @@ class LT168BBenchProtocol:
         self.frame = self.completed = 0
 
     def open(self, path):
-        if device_id(path) != (0xffff, 0x168b):
-            raise UnsupportedDisplay('Bench adapter cannot open stock display firmware')
+        if not rio_frame_interface(path):
+            raise UnsupportedDisplay('No RIO1 frame interface on this display')
         self.close()
         self.transport = self.transport_factory(path)
 
@@ -53,7 +54,9 @@ class LT168BBenchProtocol:
         self.base = None
         if self.transport is None:
             raise OSError('Display is not open')
-        self.compression = validate_hello(self.transport.control(0xc1, 0x52, 0, 0, 32))
+        hello = self.transport.control(0xc1, 0x52, 0, 0, 32)
+        self.compression = validate_hello(hello)
+        self.grouped = bool(HELLO.unpack(hello)[7] & 4)
         session = self.session_factory()
         if not 1 <= session <= 0xffffffff:
             raise ValueError('Invalid session identifier')
@@ -82,7 +85,7 @@ class LT168BBenchProtocol:
         try:
             # Firmware parses a byte stream, independent of host write boundaries.
             # Batch one frame only; its validated ACK still gates the next frame.
-            payload = b''.join(encode_frame(pixels, session=self.session, frame=sequence, acknowledged=self.base, compression=self.compression))
+            payload = b''.join(encode_frame(pixels, session=self.session, frame=sequence, acknowledged=self.base, compression=self.compression, grouped=self.grouped))
             for offset in range(0, len(payload), 64 * 1024):
                 packet = payload[offset:offset + 64 * 1024]
                 if cancelled():

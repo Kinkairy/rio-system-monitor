@@ -49,9 +49,21 @@ def device_id(path):
     return tuple(int(v, 16) for v in match.groups()) if match else None
 
 
+RIO_FRAME_GUID = '{84b28663-9385-40b2-b708-87fd58fc90a1}'
+
+
+def rio_frame_interface(path):
+    """Recognize a RIO1 interface advertised by firmware, across USB model IDs."""
+    if device_id(path) == (0xffff, 0x168b):
+        return True
+    parts = str(path).lower().split('#')
+    return (len(parts) == 4 and parts[0] in ('usb', r'\\?\usb')
+            and device_id(parts[1]) is not None and parts[-1] == RIO_FRAME_GUID)
+
+
 def capabilities_for(path):
     identity = device_id(path)
-    if identity == (0xffff, 0x168b):
+    if rio_frame_interface(path):
         from .lt168b_display import BENCH
         return BENCH
     if identity == (0xEEEF, 0x1616):
@@ -230,7 +242,7 @@ def enumerate_paths():
 
 
 def create_protocol(path, legacy_transport_factory=None, legacy_sender_factory=None):
-    if device_id(path) == (0xffff, 0x168b):
+    if rio_frame_interface(path):
         from .lt168b_display import LT168BBenchProtocol
         return LT168BBenchProtocol()
     if device_id(path) == (0xEEEF, 0x1616):

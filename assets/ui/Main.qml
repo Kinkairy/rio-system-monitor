@@ -37,6 +37,7 @@ Rio.PanelWindow {
    background: Rectangle { x: rotationSlider.leftPadding; y: rotationSlider.topPadding+rotationSlider.availableHeight/2-height/2; width: rotationSlider.availableWidth; height: 4; radius: 2; color: rotationSlider.hovered ? "#607451" : "#343d40" }
    handle: Rectangle { x: rotationSlider.leftPadding+rotationSlider.visualPosition*(rotationSlider.availableWidth-width); y: rotationSlider.topPadding+rotationSlider.availableHeight/2-height/2; width: 18; height: 18; radius: 9; color: rotationSlider.pressed || rotationSlider.hovered ? "#d1ff9b" : "#a7eb52"; border.width: rotationSlider.hovered ? 2 : 0; border.color: "#ecffd7" }
   }
+  ActionButton { objectName: "screenFirmwarePackage"; x: 208; y: 228; width: 190; height: 30; text: win.tr("Update screen firmware","更新屏幕固件"); enabled: !bridge.firmwareBusy && !bridge.storageBusy; onClicked: bridge.requestFirmware() }
   RioText { x: 24; y: 280; text: win.tr("Weather","天气"); color: "#dce3e6" }
   ActionButton { x: 20; y: 306; width: 332; text: bridge.cityLabel || win.tr("Select city","选择城市"); onClicked: { cityPopup.open(); searchField.forceActiveFocus() } }
   RefreshButton { objectName: "weatherRefreshButton"; x: 362; y: 306; onClicked: consentPopup.open() }
@@ -186,12 +187,27 @@ Rio.PanelWindow {
   ColumnLayout { anchors.fill: parent; spacing: 12
    RioText { text: win.tr("Install RIO screen firmware","安装 RIO 屏幕固件"); font.pixelSize: 17; color: "#edf0f2" }
    RioText { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 12; color: "#c2cdd0"
-    text: bridge.firmwareState==="available" ? win.tr("Only for the verified eM133-V3 / LT168B round screen. This replaces the original application to enable full RIO images. It writes 12 KiB; bootloader and theme storage are retained. A wrong board or power loss can leave the screen blank. After confirming the model, hold the bottom button while reconnecting USB, then release after 3 seconds. RIO verifies the original firmware before writing.","仅适用于已验证的 eM133-V3 / LT168B 圆屏。将替换原厂应用以显示 RIO 完整画面，写入应用区前 12 KiB，保留引导程序和主题存储。型号错误或中途断电可能导致黑屏。确认型号并开始后，请按住底部按钮重新插入 USB，3 秒后松开。RIO 核对原厂固件后自动写入。") : bridge.firmwareState==="waiting" ? win.tr("Unplug screen USB. Hold the bottom button while plugging it back in, then release after 3 seconds. RIO will detect upgrade mode, write and verify automatically. Waiting up to 3 minutes.","拔下屏幕 USB，按住底部按钮插回，3 秒后松开。RIO 检测到升级模式后会自动写入、校验并连接。等待上限 3 分钟。") : bridge.firmwareState==="writing" ? win.tr("Writing and verifying. Keep the screen connected and do not power off.","正在写入并校验，请勿拔线或断电。") : bridge.firmwareState==="done" ? win.tr("Firmware verified and started. RIO is connecting automatically.","固件校验完成并已启动，RIO 正在自动连接。") : bridge.firmwareState==="cancelled" ? win.tr("Cancelled before writing. No firmware was changed.","已在写入前取消，未改动固件。") : win.tr("Update stopped. It will not retry automatically. Keep the device connected and retain the firmware log.","升级已停止，不会自动重试。请保留设备连接和固件日志。")
+    text: {
+     switch (bridge.firmwareState) {
+      case "available": return win.tr("The eM133-V3 update includes the original 7.2-second RIO startup animation. Start the update, then hold the bottom button while reconnecting USB. Release it after 3 seconds.", "eM133-V3 固件内置 7.2 秒 RIO 原版启动动画。开始后，按住屏底按钮插回 USB，约 3 秒后松开。")
+      case "waiting": return win.tr("Waiting for the screen in update mode. Hold the bottom button while reconnecting USB, then release after 3 seconds.", "等待圆屏进入升级模式。按住屏底按钮插回 USB，约 3 秒后松开。")
+      case "backing_up": return win.tr("Saving this screen’s 588 KiB protected partition to this computer.", "正在将这块屏的 588 KiB 保护区备份到本机。")
+      case "writing_bank": return win.tr("Writing and verifying the original animation. Keep USB connected.", "正在逐段写入并校验原版动画，请保持 USB 连接。")
+      case "wait_activation": return win.tr("Animation verified. Hold the bottom button and reconnect USB once more. Release after 3 seconds to activate the player.", "动画已校验。请再次按住屏底按钮插回 USB，约 3 秒后松开，RIO 会激活播放器。")
+      case "activating": return win.tr("Activating the player. Real-time monitoring will resume automatically.", "正在激活播放器，实时监控将自动连接。")
+      case "writing": return win.tr("Checking the installed firmware. Keep USB connected.", "正在核对屏幕固件，请保持 USB 连接。")
+      case "current": return win.tr("The screen already has this player and animation. Monitoring is reconnecting.", "屏幕已装好这个版本的播放器和动画，正在重新连接监控。")
+      case "done": return win.tr("Firmware verified. RIO is reconnecting to the screen.", "固件校验完成，RIO 正在重新连接圆屏。")
+      case "cancelled": return win.tr("Update cancelled.", "升级已取消。")
+      default: return win.tr("Update stopped. See the firmware log for details.", "升级已停止，详情见固件日志。")
+     }
+    }
    }
    RioText { Layout.fillWidth: true; Layout.fillHeight: true; wrapMode: Text.WrapAnywhere; font.pixelSize: 11; color: "#eb9595"; text: bridge.firmwareError }
-   ProgressBar { Layout.fillWidth: true; from: 0; to: 1; value: bridge.firmwareProgress; indeterminate: bridge.firmwareState==="waiting"; visible: bridge.firmwareBusy }
+   ProgressBar { Layout.fillWidth: true; from: 0; to: 1; value: bridge.firmwareProgress; indeterminate: bridge.firmwareState==="waiting" || bridge.firmwareState==="wait_activation"; visible: bridge.firmwareBusy }
    RowLayout { Layout.fillWidth: true; spacing: 12
-    ActionButton { objectName: "firmwareCancelButton"; Layout.fillWidth: true; text: bridge.firmwareBusy ? win.tr("Cancel","取消") : win.tr("Close","关闭"); enabled: bridge.firmwareState!=="writing"; onClicked: { bridge.cancelFirmware(); if(!bridge.firmwareBusy) firmwarePopup.close() } }
+    ActionButton { objectName: "firmwareCancelButton"; Layout.fillWidth: true; text: bridge.firmwareBusy ? win.tr("Cancel","取消") : win.tr("Close","关闭"); enabled: !bridge.firmwareBusy || bridge.firmwareState==="waiting"; onClicked: { bridge.cancelFirmware(); if(!bridge.firmwareBusy) firmwarePopup.close() } }
+    ActionButton { objectName: "firmwareChooseFile"; Layout.fillWidth: true; visible: bridge.firmwareState==="available"; text: win.tr("Choose file…","选择文件…"); onClicked: bridge.chooseFirmwarePackage() }
     ActionButton { objectName: "firmwareStartButton"; Layout.fillWidth: true; visible: bridge.firmwareState==="available"; text: win.tr("Confirm model · Start","确认型号 · 开始"); onClicked: bridge.startFirmware() }
    }
   }
