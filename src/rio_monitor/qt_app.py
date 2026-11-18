@@ -107,6 +107,7 @@ class Bridge(QObject):
  def getFooterStatus(self):
   monitor=self.monitor.snapshot();storage=self.storage.snapshot();zh=self.s.language=='zh'
   if monitor['busy']:
+   if monitor['state']=='updating':return self.getMonitorStatus()
    return ('正在卸载驱动…' if zh else 'Removing driver…') if monitor['state']=='uninstalling' else ('正在安装驱动…' if zh else 'Installing driver…')
   if storage['busy']:
    labels={'prepare':('Preparing media…','正在转换媒体…'),'connecting':('Connecting…','正在连接屏幕…'),'erase':('Preparing storage…','正在准备存储…'),'write':('Writing media…','正在写入媒体…')}
@@ -124,6 +125,7 @@ class Bridge(QObject):
  footerProgress=Property(float,getFooterProgress,notify=changed)
  monitorChecked=Property(bool,lambda self:self.monitor.snapshot()['checked'],notify=changed)
  monitorBusy=Property(bool,lambda self:self.monitor.snapshot()['busy'],notify=changed)
+ monitorUpdateAvailable=Property(bool,lambda self:self.monitor.snapshot().get('update_available',False),notify=changed)
  monitorExternal=Property(bool,lambda self:self.monitor.snapshot().get('external',False),notify=changed)
  storageBusy=Property(bool,lambda self:self.storage.snapshot()['busy'],notify=changed)
  storageWriting=Property(bool,lambda self:self.storage.snapshot()['writing'],notify=changed)
@@ -205,12 +207,16 @@ class Bridge(QObject):
   labels={'detecting':('Checking existing sensors…','正在检测现有传感器…'),'missing':('Enable to install · Administrator approval once','首次开启时安装 · 需管理员确认'),'installing':('Installing temperature component…','正在安装温度监控组件…'),'existing':('Using existing sensor interface','使用现有传感器接口'),'ready':('Installed · Running','已安装 · 运行正常'),'starting':('Starting temperature monitoring…','正在启用温度监控…'),'off':('Monitoring off','温度监控已关闭'),'unsupported':('Installed · CPU sensor unavailable','已安装 · 暂无可用 CPU 温度'),'error':('Component unavailable · Re-enable to repair','组件异常 · 重新开启可修复'),'cancelled':('Installation cancelled','已取消安装'),'reboot':('Installed · Windows restart required','已安装 · 需重启 Windows')}
   snapshot=self.monitor.snapshot();state=snapshot['state']
   labels.update({'existing':('Existing sensor interface · No installation needed','已检测到现有接口 · 无需安装'),'uninstalling':('Removing our temperature component…','正在卸载我们安装的组件…'),'removed':('Our component removed','我们安装的组件已卸载'),'uninstall_reboot':('Removed · Windows restart required','已卸载 · 重启后完成驱动移除')})
+  labels.update({'update_available':('Update to read the CPU temperature','更新组件后读取 CPU 温度'),'updating':('Updating temperature component…','正在更新温度组件…'),'update_cancelled':('Update cancelled · Click to retry','已取消更新，可点击重试'),'update_failed':('Update failed · Click to retry','组件更新失败，可点击重试')})
   if state=='off':labels['off']=('Installed · Monitoring off','已安装 · 温度监控已关闭') if snapshot['installed'] else ('Enable to detect sensors or install','开启时检测，缺少时安装')
   return labels.get(state,labels['missing'])[1 if self.s.language=='zh' else 0]
  monitorStatus=Property(str,getMonitorStatus,notify=changed)
  @Slot(bool)
  def setMonitorEnabled(self,value):
   self.monitor.request(value);self.applySettings(temperature_monitor=self.monitor.enabled);self.changed.emit()
+ @Slot()
+ def updateTemperatureComponent(self):
+  if not self.capture:self.monitor.request_update();self.changed.emit()
  def tell(self,text,source=None):
   self._notice=text;self._notice_source=source;self.noticeChanged.emit()
  def updateUsb(self,state,now=None):

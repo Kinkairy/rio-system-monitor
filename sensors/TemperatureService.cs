@@ -52,9 +52,9 @@ internal static class Component
         }
         catch { return false; }
     }
-    internal static void Status(string status, double? temperature)
+    internal static void Status(string status, CpuTemperature temperature)
     {
-        Write(Path.Combine(StateDir, "sensors.json"), new { version = Version, timestamp = Timestamp(), status = status, cpu_temperature = temperature, source = "LibreHardwareMonitor 0.9.6 / PawnIO" });
+        Write(Path.Combine(StateDir, "sensors.json"), new { version = Version, timestamp = Timestamp(), status = status, cpu_temperature = temperature == null ? (double?)null : temperature.Value, sensor = temperature == null ? null : temperature.Sensor, source = "LibreHardwareMonitor 0.9.6 / PawnIO" });
     }
     static bool IsAdmin() { return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator); }
     static bool ServiceExists(string name) { using (var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\" + name)) return key != null; }
@@ -150,7 +150,85 @@ internal static class Component
                 if (BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant() != row.Value) throw new IOException("Temperature payload checksum failed");
         }
     }
-    static int Install()
+    // Update an existing RIO helper without changing driver ownership or settings.
+    static int UpdateInstalled()
+    {
+        if (!IsAdmin()) return 5;
+        string source = AppDomain.CurrentDomain.BaseDirectory;
+        string target = Path.Combine(InstallDir, "RIO-Temperature.exe");
+        VerifyPayload(source);
+        RejectReparse(target);
+        if (!File.Exists(target) || !ServiceExists(ServiceName)) throw new IOException("RIO temperature service is not installed");
+        CheckServicePath(target);
+        string lockPath = Path.Combine(InstallDir, ".component-update.lock");
+        RejectReparse(lockPath);
+        using (new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose))
+        using (var svc = new ServiceController(ServiceName))
+        {
+            // Older installations with different libraries use the regular setup
+            // path, which also validates the service identity and package.
+            if (Payload.Files.Where(f => f.Key.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                             .Any(f => !MatchesFile(Path.Combine(InstallDir, f.Key), f.Value)))
+                return Install(true);
+
+            bool running = svc.Status == ServiceControllerStatus.Running;
+            if (!running && svc.Status != ServiceControllerStatus.Stopped) throw new IOException("Service is changing state");
+            string next = Path.Combine(InstallDir, Guid.NewGuid().ToString("N") + ".new");
+            string backup = next + ".previous";
+            bool replaced = false;
+            try
+            {
+                File.Copy(Path.Combine(source, "RIO-Temperature.exe"), next);
+                if (running) { svc.Stop(); svc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(30)); }
+                File.Replace(next, target, backup);
+                replaced = true;
+                if (running)
+                {
+                    svc.Start();
+                    svc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
+                }
+            }
+            catch
+            {
+                if (replaced)
+                {
+                    svc.Refresh();
+                    if (svc.Status != ServiceControllerStatus.Stopped)
+                    {
+                        svc.Stop();
+                        svc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(30));
+                    }
+                    File.Replace(backup, target, null);
+                }
+                svc.Refresh();
+                if (running && svc.Status == ServiceControllerStatus.Stopped) svc.Start();
+                throw;
+            }
+            finally { if (File.Exists(next)) File.Delete(next); }
+            File.Delete(backup);
+            return 0;
+        }
+    }
+
+    static bool MatchesFile(string path, string expectedHash)
+    {
+        RejectReparse(path);
+        if (!File.Exists(path)) return false;
+        using (var file = File.OpenRead(path))
+        using (var sha = SHA256.Create())
+            return String.Equals(BitConverter.ToString(sha.ComputeHash(file)).Replace("-", ""), expectedHash, StringComparison.OrdinalIgnoreCase);
+    }
+    static void CheckServicePath(string targetExe)
+    {
+        using (var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\" + ServiceName))
+        {
+            string expected = "\"" + targetExe + "\" --service";
+            if (key == null || !String.Equals((string)key.GetValue("ImagePath", ""), expected, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Service name belongs to another installation");
+        }
+    }
+
+    static int Install(bool preserveControl = false)
     {
         if (!IsAdmin()) return 5;
         if (!Environment.Is64BitOperatingSystem || IntPtr.Size != 8) return 50;
@@ -159,11 +237,7 @@ internal static class Component
         string targetExe = Path.Combine(InstallDir, "RIO-Temperature.exe");
         if (ServiceExists(ServiceName))
         {
-            using (var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\" + ServiceName))
-            {
-                string expected = "\"" + targetExe + "\" --service";
-                if (!String.Equals((string)key.GetValue("ImagePath", ""), expected, StringComparison.OrdinalIgnoreCase)) throw new IOException("Service name belongs to another installation");
-            }
+            CheckServicePath(targetExe);
             using (var svc = new ServiceController(ServiceName))
                 if (svc.Status != ServiceControllerStatus.Stopped) { svc.Stop(); svc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(30)); }
         }
@@ -197,7 +271,7 @@ internal static class Component
         if (!ServiceExists("PawnIO")) throw new IOException("PawnIO service not found after installation");
         pawnioOwned = pawnioOwned || !pawnioExisted;
         WriteOwnership(pawnioOwned, reboot);
-        Write(Path.Combine(ControlDir, "enabled.json"), new { enabled = true });
+        if (!preserveControl) Write(Path.Combine(ControlDir, "enabled.json"), new { enabled = true });
         if (!ServiceExists(ServiceName)) RegisterService(targetExe);
         else Sc("config " + ServiceName + " start= auto", true);
         Sc("description " + ServiceName + " \"Read-only CPU temperature for RIO Monitor\"", true);
@@ -265,23 +339,33 @@ internal static class Component
             {
                 var options = new EnumerationOptions { ReturnImmediately = false, Timeout = TimeSpan.FromSeconds(2) };
                 var scope = new ManagementScope(ns); scope.Options.Timeout = TimeSpan.FromSeconds(2);
-                var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var sockets = new Dictionary<string, CpuTemperature>(StringComparer.OrdinalIgnoreCase);
                 using (var search = new ManagementObjectSearcher(scope, new ObjectQuery("SELECT Identifier, HardwareType FROM Hardware"), options))
                 using (var rows = search.Get())
-                    foreach (ManagementObject row in rows) if (String.Equals(Convert.ToString(row["HardwareType"]), "Cpu", StringComparison.OrdinalIgnoreCase)) ids.Add(Convert.ToString(row["Identifier"]));
-                double? best = null;
-                using (var search = new ManagementObjectSearcher(scope, new ObjectQuery("SELECT Parent, SensorType, Value FROM Sensor"), options))
+                    foreach (ManagementObject row in rows)
+                    {
+                        string id = Convert.ToString(row["Identifier"]);
+                        if (!String.IsNullOrEmpty(id) && String.Equals(Convert.ToString(row["HardwareType"]), "Cpu", StringComparison.OrdinalIgnoreCase))
+                            sockets[id] = new CpuTemperature();
+                    }
+                using (var search = new ManagementObjectSearcher(scope, new ObjectQuery("SELECT Parent, Name, SensorType, Value FROM Sensor"), options))
                 using (var rows = search.Get())
                     foreach (ManagementObject row in rows)
                     {
                         if (!String.Equals(Convert.ToString(row["SensorType"]), "Temperature", StringComparison.OrdinalIgnoreCase)) continue;
                         string parent = Convert.ToString(row["Parent"]);
-                        if (!ids.Any(id => parent == id || parent.StartsWith(id + "/", StringComparison.OrdinalIgnoreCase))) continue;
                         if (row["Value"] == null) continue;
-                        double value = Convert.ToDouble(row["Value"], CultureInfo.InvariantCulture);
-                        if (!Double.IsNaN(value) && value > 0 && value <= 125) best = best.HasValue ? Math.Max(best.Value, value) : value;
+                        CpuTemperature socket;
+                        while (!sockets.TryGetValue(parent, out socket))
+                        {
+                            int separator = parent.LastIndexOf('/');
+                            if (separator < 0) break;
+                            parent = parent.Substring(0, separator);
+                        }
+                        if (socket != null) socket.Consider(Convert.ToString(row["Name"]), Convert.ToDouble(row["Value"], CultureInfo.InvariantCulture));
                     }
-                if (best.HasValue) return new { cpu_temperature = best, source = ns, timestamp = Timestamp() };
+                var selected = CpuTemperature.HottestSocket(sockets.Values);
+                if (selected != null) return new { cpu_temperature = selected.Value, sensor = selected.Sensor, source = ns, timestamp = Timestamp() };
             }
             catch (ManagementException) { } catch (UnauthorizedAccessException) { } catch (System.Runtime.InteropServices.COMException) { }
         }
@@ -293,6 +377,7 @@ internal static class Component
         {
             if (args.Length == 1 && args[0] == "--probe-existing") { Console.WriteLine(Serialize(ProbeExisting())); return 0; }
             if (args.Length == 1 && args[0] == "--install") return Install();
+            if (args.Length == 1 && args[0] == "--update") return UpdateInstalled();
             if (args.Length == 1 && args[0] == "--uninstall") return Uninstall();
             if (args.Length == 1 && args[0] == "--self-test")
             {
@@ -310,21 +395,20 @@ internal sealed class CpuReader : IDisposable
 {
     readonly Computer computer = new Computer { IsCpuEnabled = true };
     internal CpuReader() { computer.Open(); }
-    internal double? Read()
+    internal CpuTemperature Read()
     {
-        double? best = null;
+        var sockets = new List<CpuTemperature>();
         foreach (IHardware cpu in computer.Hardware)
         {
             if (cpu.HardwareType != HardwareType.Cpu) continue;
             cpu.Update();
+            var socket = new CpuTemperature();
             foreach (ISensor sensor in cpu.Sensors)
                 if (sensor.SensorType == SensorType.Temperature && sensor.Value.HasValue)
-                {
-                    double value = sensor.Value.Value;
-                    if (!Double.IsNaN(value) && value > 0 && value <= 125) best = best.HasValue ? Math.Max(best.Value, value) : value;
-                }
+                    socket.Consider(sensor.Name, sensor.Value.Value);
+            sockets.Add(socket);
         }
-        return best;
+        return CpuTemperature.HottestSocket(sockets);
     }
     public void Dispose() { computer.Close(); }
 }
@@ -354,7 +438,8 @@ internal sealed class TemperatureService : ServiceBase
                     else
                     {
                         if (reader == null) reader = new CpuReader();
-                        double? value = reader.Read(); Component.Status(value.HasValue ? "ready" : "unsupported", value);
+                        var value = reader.Read();
+                        Component.Status(value != null ? "ready" : "unsupported", value);
                     }
                 }
                 catch

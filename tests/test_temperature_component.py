@@ -13,6 +13,49 @@ class TemperatureTests(unittest.TestCase):
             for value in (True,-1,200,None):
                 row['cpu_temperature']=value;file.write_text(json.dumps(row));self.assertIsNone(read_status(file,102)['cpu_temperature'])
             file.write_text('[]');self.assertIsNone(read_status(file,102))
+    def test_old_service_waits_for_a_click_and_never_displays_a_margin(self):
+        component=TemperatureComponent(Path(),start=False)
+        legacy=dict(status='ready',cpu_temperature=69)
+        corrected=dict(status='ready',cpu_temperature=47,sensor='CPU Package')
+        def update(helper,stop):
+            stop.set();component.wake.set()
+            return 'installed'
+        component.updater=Mock(side_effect=update)
+        with patch('rio_monitor.temperature_component.service_installed',return_value=True), patch('rio_monitor.temperature_component.read_status',side_effect=[legacy,corrected]):
+            component.poll()
+            self.assertIsNone(component.temperature())
+            self.assertTrue(component.snapshot()['update_available'])
+            component.updater.assert_not_called()
+            component.request_update();component.request_update()
+            self.assertEqual(component.snapshot()['state'],'updating')
+            component.run()
+        component.updater.assert_called_once()
+        self.assertEqual(component.temperature(),47)
+        self.assertFalse(component.snapshot()['update_available'])
+
+    def test_declined_component_update_can_be_retried(self):
+        component=TemperatureComponent(Path(),start=False)
+        def decline(helper,stop):
+            stop.set();component.wake.set()
+            return 'cancelled'
+        component.updater=decline
+        with patch('rio_monitor.temperature_component.service_installed',return_value=True), patch('rio_monitor.temperature_component.read_status',return_value=dict(status='ready',cpu_temperature=68)):
+            component.poll();component.request_update();component.run()
+        self.assertEqual(component.snapshot()['state'],'update_cancelled')
+        self.assertTrue(component.enabled)
+        self.assertTrue(component.update_available)
+        self.assertIsNone(component.temperature())
+
+    def test_new_unsupported_and_external_sources_do_not_prompt_upgrade(self):
+        component=TemperatureComponent(Path(),start=False)
+        with patch('rio_monitor.temperature_component.service_installed',return_value=True), patch('rio_monitor.temperature_component.read_status',return_value=dict(status='unsupported',cpu_temperature=None,sensor=None)):
+            component.poll()
+            self.assertFalse(component.update_available)
+        with patch('rio_monitor.temperature_component.service_installed',return_value=False), patch.object(component,'probe_existing',return_value=dict(cpu_temperature=53,source='existing')):
+            component.poll();component.request_update()
+            self.assertFalse(component.update_requested)
+            self.assertEqual(component.temperature(),53)
+
     def test_startup_never_requests_installation(self):
         installer=Mock();component=TemperatureComponent(Path(),installer=installer,start=False)
         with patch('rio_monitor.temperature_component.service_installed',return_value=False),patch.object(component,'probe_existing',return_value=None):component.poll()

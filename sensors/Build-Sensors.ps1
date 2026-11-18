@@ -48,7 +48,7 @@ $rioGenerated = Join-Path $PSScriptRoot 'Payload.generated.cs'
 [System.IO.File]::WriteAllText($rioGenerated,$rioPayloadSource)
 $rioCompiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 if (-not (Test-Path -LiteralPath $rioCompiler)) { throw '.NET Framework 4.x compiler is unavailable' }
-& $rioCompiler /nologo /target:exe /platform:x64 /optimize+ ('/out:'+(Join-Path $rioOut 'RIO-Temperature.exe')) ('/reference:'+(Join-Path $rioOut 'LibreHardwareMonitorLib.dll')) /reference:System.Management.dll /reference:System.ServiceProcess.dll /reference:System.Web.Extensions.dll (Join-Path $PSScriptRoot 'TemperatureService.cs') $rioGenerated
+& $rioCompiler /nologo /target:exe /platform:x64 /optimize+ ('/out:'+(Join-Path $rioOut 'RIO-Temperature.exe')) ('/reference:'+(Join-Path $rioOut 'LibreHardwareMonitorLib.dll')) /reference:System.Management.dll /reference:System.ServiceProcess.dll /reference:System.Web.Extensions.dll (Join-Path $PSScriptRoot 'TemperatureService.cs') (Join-Path $PSScriptRoot 'CpuTemperature.cs') $rioGenerated
 if ($LASTEXITCODE -ne 0) { throw 'Temperature helper compilation failed' }
 $rioManifest['RIO-Temperature.exe']=(Get-FileHash -LiteralPath (Join-Path $rioOut 'RIO-Temperature.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
 $rioManifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'payload-manifest.json') -Encoding UTF8

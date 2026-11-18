@@ -45,7 +45,8 @@ Rio.PanelWindow {
   ActionButton { objectName: "storageButton"; x: 20; y: 390; width: 332; text: bridge.storageBusy ? bridge.storageStatus : bridge.storageError ? win.tr("Operation failed · Choose content again","操作失败 · 请重新选择内容") : bridge.storageStored ? win.tr("Stored content · Manage","屏内内容 · 管理") : win.tr("Video or image · Up to 3.4 MB","视频或图片 · 不超过 3.4 MB"); onClicked: storagePopup.open() }
   RefreshButton { objectName: "restoreDefaultButton"; x: 362; y: 390; enabled: bridge.defaultAvailable && !bridge.storageBusy; Accessible.name: win.tr("Restore default","恢复默认"); ToolTip.visible: hovered; ToolTip.text: win.tr("Restore default","恢复默认"); onClicked: bridge.requestRestoreDefault() }
   RioText { x: 24; y: 445; text: win.tr("Temperature monitoring","温度监控"); color: "#dce3e6" }
-  RioText { x: 24; y: 464; width: 318; text: bridge.monitorStatus; color: "#89979f"; font.pixelSize: 10; elide: Text.ElideRight }
+  RioText { x: 24; y: 464; width: bridge.monitorUpdateAvailable ? 205 : 318; text: bridge.monitorStatus; color: "#89979f"; font.pixelSize: 10; elide: Text.ElideRight }
+  ActionButton { objectName: "monitorUpdateButton"; x: 228; y: 440; width: 118; height: 26; visible: bridge.monitorUpdateAvailable; enabled: !bridge.monitorBusy; text: win.tr("Update component","更新温度组件"); onClicked: bridge.updateTemperatureComponent() }
   RioSwitch { objectName: "monitorSwitch"; x: 358; y: 439; checked: bridge.monitorChecked; enabled: !bridge.monitorBusy && !bridge.monitorExternal; onToggled: bridge.setMonitorEnabled(checked) }
   RioText { x: 24; y: 490; text: win.tr("Music appreciation","音乐欣赏模式"); color: "#dce3e6" }
   RioSwitch { objectName: "musicSwitch"; x: 358; y: 484; checked: bridge.musicEnabled; onToggled: bridge.setMusicEnabled(checked) }

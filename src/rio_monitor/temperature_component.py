@@ -61,7 +61,7 @@ def elevate_helper(helper,stop,operation):
     shell=ctypes.WinDLL('shell32',use_last_error=True);kernel=ctypes.WinDLL('kernel32',use_last_error=True)
     shell.ShellExecuteExW.argtypes=[ctypes.POINTER(Execute)];shell.ShellExecuteExW.restype=w.BOOL
     kernel.WaitForSingleObject.argtypes=[w.HANDLE,w.DWORD];kernel.GetExitCodeProcess.argtypes=[w.HANDLE,ctypes.POINTER(w.DWORD)];kernel.CloseHandle.argtypes=[w.HANDLE]
-    if operation not in ('install','uninstall'):raise ValueError('Unsupported component operation')
+    if operation not in ('install','uninstall','update'):raise ValueError('Unsupported component operation')
     request=Execute();request.cbSize=ctypes.sizeof(request);request.fMask=0x40|0x100;request.lpVerb='runas';request.lpFile=str(helper);request.lpParameters='--'+operation;request.lpDirectory=str(helper.parent);request.nShow=0
     if not shell.ShellExecuteExW(ctypes.byref(request)):
         error=ctypes.get_last_error()
@@ -81,12 +81,16 @@ def elevate_helper(helper,stop,operation):
 
 def elevate_install(helper,stop):return elevate_helper(helper,stop,'install')
 def elevate_uninstall(helper,stop):return elevate_helper(helper,stop,'uninstall')
+def elevate_update(helper,stop):return elevate_helper(helper,stop,'update')
 
 class TemperatureComponent:
-    def __init__(self,assets,enabled=True,start=True,installer=elevate_install,uninstaller=elevate_uninstall):
+    def __init__(self,assets,enabled=True,start=True,installer=elevate_install,uninstaller=elevate_uninstall,updater=elevate_update):
         self.helper=Path(assets)/'temperature'/'RIO-Temperature.exe';self.enabled=enabled;self.installer=installer
         self.lock=threading.RLock();self.stop=threading.Event();self.wake=threading.Event();self.thread=None;self.process=None
         self.value=None;self.source='unavailable';self.stamp=0.;self.native_value=None;self.native_stamp=0.;self.installed=False;self.state='detecting';self.busy=False;self.install_requested=False;self.failure=None;self.reboot=False;self.command_until=0.
+        self.updater=updater
+        self.update_available=False
+        self.update_requested=False
         self.uninstaller=uninstaller;self.uninstall_requested=False;self.operation='installing';self.external=False;self.removed=False;self.remove_reboot=False
         if start:self.thread=threading.Thread(target=self.run,daemon=True);self.thread.start()
         else:self.state='missing'
@@ -99,7 +103,7 @@ class TemperatureComponent:
             return self.value if time.monotonic()-self.stamp<=5 and valid_temperature(self.value) else None
     def snapshot(self):
         with self.lock:
-            return dict(enabled=self.enabled,checked=self.enabled and (self.busy or self.installed or self.state=='existing'),busy=self.busy,state=self.operation if self.busy else self.state,installed=self.installed,external=self.external)
+            return dict(enabled=self.enabled,checked=self.enabled and (self.busy or self.installed or self.state=='existing'),busy=self.busy,state=self.operation if self.busy else self.state,installed=self.installed,external=self.external,update_available=self.update_available)
     def request(self,enabled):
         with self.lock:
             if self.busy or self.external:return
@@ -120,6 +124,16 @@ class TemperatureComponent:
             elif enabled:self.state='starting' if self.installed else 'existing'
             elif not enabled:self.state='off';self.value=None
         self.wake.set()
+    def request_update(self):
+        with self.lock:
+            if self.busy or not self.installed or not self.update_available:
+                return
+            self.busy=True
+            self.operation='updating'
+            self.update_requested=True
+            self.failure=None
+        self.wake.set()
+
     def probe_existing(self):
         if not self.helper.is_file():return None
         try:
@@ -136,6 +150,12 @@ class TemperatureComponent:
         installed=service_installed();row=read_status() if installed else None
         with self.lock:
             self.installed=installed
+            if not installed:
+                self.update_available=False
+            elif row:
+                # Corrected helpers always include the selected sensor, even when
+                # no reading is available. Legacy helpers emitted only a number.
+                self.update_available='sensor' not in row
             if self.remove_reboot:self.state='uninstall_reboot';return
             if self.reboot:self.state='reboot';return
             if not self.enabled and installed:self.value=None;self.state=self.failure or 'off';self.external=False;return
@@ -143,6 +163,11 @@ class TemperatureComponent:
                 self.value=None
                 if time.monotonic()<self.command_until:self.state='starting'
                 else:self.enabled=False;self.state='off'
+                return
+            if self.update_available:
+                self.value=None
+                self.external=False
+                self.state=self.failure or 'update_available'
                 return
             if row and row['status'] in ('ready','unsupported','error'):
                 self.value=row['cpu_temperature'];self.stamp=time.monotonic();self.source=row.get('source','RIO service');self.state=row['status'];self.external=False;return
@@ -155,7 +180,25 @@ class TemperatureComponent:
     def run(self):
         while not self.stop.is_set():
             self.wake.clear()
-            with self.lock:install=self.install_requested;remove=self.uninstall_requested;self.install_requested=False;self.uninstall_requested=False
+            with self.lock:
+                install=self.install_requested
+                remove=self.uninstall_requested
+                update=self.update_requested
+                self.install_requested=False
+                self.uninstall_requested=False
+                self.update_requested=False
+            if update:
+                try:
+                    result=self.updater(self.helper,self.stop) if service_installed() else 'failed'
+                except OSError:
+                    result='failed'
+                with self.lock:
+                    self.busy=False
+                    self.failure=None if result in ('installed','reboot') else ('update_cancelled' if result=='cancelled' else 'update_failed')
+                    self.reboot=result=='reboot'
+                self.poll()
+                self.wake.wait(1)
+                continue
             if remove:
                 try:result=self.uninstaller(self.helper,self.stop)
                 except OSError:result='failed'
