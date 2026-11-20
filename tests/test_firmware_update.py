@@ -70,18 +70,6 @@ class FirmwareTests(unittest.TestCase):
     def test_cancel_before_program_mode(self):
         with self.assertRaisesRegex(RuntimeError,'cancelled'):fw.program(self.port,self.plan,cancelled=lambda:True)
         self.assertEqual(self.port.sent,[])
-    def test_only_matching_stock_is_offered_and_never_arms_itself(self):
-        service,session=self.service();session.output=SimpleNamespace(path='stock')
-        for protocol in ('rio-winusb','lt168b-rio-bench','unknown'):self.assertFalse(service.offer(protocol))
-        service.detector=lambda:['different'];self.assertFalse(service.offer('levetop-emonitor'))
-        service.detector=lambda:['stock'];self.assertTrue(service.offer('levetop-emonitor'))
-        self.assertEqual(service.snapshot()['state'],'available');self.assertFalse(service.snapshot()['busy']);service.opener.assert_not_called()
-        service.dismiss();self.assertFalse(service.offer('levetop-emonitor'))
-        service.offer('rio-winusb');self.assertFalse(service.offer('levetop-emonitor'))
-        # A real observed unplug re-arms even if the same USB path/protocol returns.
-        session._enumerator=lambda:[]
-        with self.assertRaises(RuntimeError):session.one_path()
-        self.assertTrue(service.offer('levetop-emonitor'))
     def test_descriptor_profile_is_exact_not_vendor_only(self):
         good=dict(path=b'stock',vendor_id=0xeeef,product_id=0x1616,manufacturer_string='LEVETOP',product_string='USB-HID',release_number=256,usage_page=1,usage=0,interface_number=0)
         devices=[good]+[dict(good,**{k:'wrong'}) for k in good if k!='path']
@@ -135,8 +123,52 @@ class FirmwareBridgeTests(unittest.TestCase):
         b=Bridge(app,Settings(),SimpleNamespace(location=None),Frames(),capture=True)
         try:
             b.storage.session.mode='firmware';b.consume();self.assertEqual(b.s.display_mode,'monitor')
-            with patch.object(b.firmware,'start') as start:b.startFirmware();start.assert_not_called()
+            self.assertIsNone(b.firmware.watcher)
         finally:b.save_timer.stop();b.storage.close()
+
+class AutomaticFirmwareTests(unittest.TestCase):
+    def setUp(self):
+        self.paths=['stock']
+        self.ports=[]
+        self.session=DisplaySession(enumerator=lambda:list(self.paths))
+        self.session.output=SimpleNamespace(path='stock',error=None,sent=1,capabilities=SimpleNamespace(protocol='levetop-emonitor'))
+        self.service=fw.FirmwareUpdate(self.session,Path(),Path(),ports=lambda:list(self.ports),detector=lambda:['stock'])
+        self.load=patch.object(self.service,'select_bundled').start()
+        self.start=patch.object(self.service,'start',return_value=True).start()
+        self.addCleanup(patch.stopall)
+
+    def test_single_verified_stock_screen_starts_once_per_attachment(self):
+        self.assertTrue(self.service.detect())
+        self.assertFalse(self.service.detect())
+        self.start.assert_called_once_with(automatic=True,boot_present=False)
+        self.session.attachment_generation+=1
+        self.assertTrue(self.service.detect())
+
+    def test_rio_other_ambiguous_and_unacknowledged_screens_are_skipped(self):
+        output=self.session.output
+        for protocol in ('lt168b-rio-bench','rio-winusb','another'):
+            output.capabilities.protocol=protocol
+            self.assertFalse(self.service.detect())
+        output.capabilities.protocol='levetop-emonitor'
+        self.paths=['another','stock']
+        self.assertFalse(self.service.detect())
+        self.paths=['stock'];output.sent=0
+        self.assertFalse(self.service.detect())
+        output.sent=1;self.service.detector=lambda:['other']
+        self.assertFalse(self.service.detect())
+        self.load.assert_not_called();self.start.assert_not_called()
+
+    def test_single_boot_device_is_examined_once_and_rearms_on_removal(self):
+        self.session.output=None;self.paths=[];self.ports=['A','B']
+        self.assertFalse(self.service.detect());self.ports=['A']
+        self.assertTrue(self.service.detect());self.assertFalse(self.service.detect())
+        self.start.assert_called_once_with(automatic=True,boot_present=True)
+        self.ports=[];self.assertFalse(self.service.detect());self.ports=['A']
+        self.assertTrue(self.service.detect())
+
+    def test_busy_session_does_not_arm_update(self):
+        self.session.resource_active=True
+        self.assertFalse(self.service.detect());self.start.assert_not_called()
 
 class BootDiscoveryTests(unittest.TestCase):
     def port(self,name='COM6',serial='',vid=0xeeef,pid=0x268a):

@@ -111,3 +111,20 @@ Independent implementation uses QQ public web search suggestions on c.y.qq.com, 
 New preferences enable the disclosed providers by default (provider-setting version 2); existing disabled or older-version preferences stay disabled. Real endpoint probes verify only the tested request/data shape, not every song or installed client. Windows SMTC compatibility still requires local tests.
 
 References: Microsoft SourceAppUserModelId documentation and LX platform adapter architecture: https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssession.sourceappusermodelid and https://github.com/lyswhut/lx-music-desktop/tree/master/src/renderer/utils/musicSdk .
+
+## NetEase desktop tray playback (rc0.1.24)
+
+RIO-MONITOR-PUBLIC-RC024-20261120.
+
+RIO uses native Windows media-session metadata whenever the player provides it.
+For NetEase desktop 3.1.43.205627 x64, the fallback uses the confirmed audio
+process, the title of its main player window in the foreground or tray, and its
+local play queue. When the installed client and recording match, RIO reads
+the playback position and requests timed lyrics for that exact recording if
+online lyrics are enabled. The preview follows playback, pause, seek and track
+changes. Changes to the client build or an ambiguous queue fall back to the
+available title and audio information.
+
+Windows software-preview checks covered play, pause, seek, next track and
+background playback with the NetEase window hidden in the tray. These results
+cover the preview and the verified desktop client.

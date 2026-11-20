@@ -11,7 +11,7 @@ def identify_player(source):
     value=str(source).replace('\\','/').casefold()
     name=value.rsplit('/',1)[-1]
     if name in ('qqmusic','qqmusic.exe') or re.match(r'^tencent\.qqmusic_[a-z0-9]+!',name):return 'qq'
-    if name in ('cloudmusic','cloudmusic.exe','neteasecloudmusic','neteasecloudmusic.exe') or re.match(r'^netease\.cloudmusic_[a-z0-9]+!',name):return 'netease'
+    if name in ('cloudmusic','cloudmusic.exe','neteasecloudmusic','neteasecloudmusic.exe','netease-window-audio') or re.match(r'^netease\.cloudmusic_[a-z0-9]+!',name):return 'netease'
     if name in ('kugou','kugou.exe','kugoumusic','kugoumusic.exe'):return 'kugou'
     return None  # Browsers, LX and unknown app IDs must not be guessed.
 
@@ -29,14 +29,16 @@ class Candidate:
     duration: float
 
 
+def same_artists(display, artists):
+    return normalized(display) in {normalized(sep.join(artists)) for sep in (' / ','、',', ',' & ','; ','/')}
+
+
 def match_candidate(track,candidates):
     if not track.title or not track.artist or track.duration<=0:return None
     matches={}
     for item in candidates:
         if normalized(item.title)!=normalized(track.title):continue
-        artist=normalized(track.artist)
-        joins={normalized(sep.join(item.artists)) for sep in (' / ','、',', ',' & ','; ','/')}
-        if artist not in joins:continue
+        if not same_artists(track.artist,item.artists):continue
         if abs(item.duration-track.duration)>3:continue
         if track.album and normalized(item.album)!=normalized(track.album):continue
         matches[item.ident]=item
@@ -93,18 +95,21 @@ def lookup_platform(track,player=None):
             if '[' not in text:
                 text=base64.b64decode(text,validate=True).decode('utf-8')
         elif player=='netease':
-            data=request_json('https://music.163.com/api/cloudsearch/pc',dict(s=query,type=1,limit=10,offset=0),referer='https://music.163.com/')
-            if data.get('code')!=200:return (), 'provider_error'
-            result=data.get('result')
-            if not isinstance(result,dict):return (), 'provider_error'
-            candidates=[]
-            for item in result.get('songs',[])[:10]:
-                ident=str(item.get('id',''))
-                if not re.fullmatch('[0-9]{1,20}',ident):continue
-                candidates.append(Candidate(ident,item.get('name',''),tuple(s.get('name','') for s in item.get('ar',[])),item.get('al',{}).get('name',''),float(item.get('dt',0))/1000))
-            matched=match_candidate(track,candidates)
-            if not matched:return (), 'not_found'
-            data=request_json('https://music.163.com/api/song/lyric?'+urllib.parse.urlencode(dict(id=matched.ident,lv=-1,kv=-1,tv=-1)),referer='https://music.163.com/')
+            ident=track.recording_id if identify_player(track.source)=='netease' else ''
+            if not re.fullmatch('[1-9][0-9]{0,19}',ident):
+                data=request_json('https://music.163.com/api/cloudsearch/pc',dict(s=query,type=1,limit=10,offset=0),referer='https://music.163.com/')
+                if data.get('code')!=200:return (), 'provider_error'
+                result=data.get('result')
+                if not isinstance(result,dict):return (), 'provider_error'
+                candidates=[]
+                for item in result.get('songs',[])[:10]:
+                    ident=str(item.get('id',''))
+                    if not re.fullmatch('[0-9]{1,20}',ident):continue
+                    candidates.append(Candidate(ident,item.get('name',''),tuple(s.get('name','') for s in item.get('ar',[])),item.get('al',{}).get('name',''),float(item.get('dt',0))/1000))
+                matched=match_candidate(track,candidates)
+                if not matched:return (), 'not_found'
+                ident=matched.ident
+            data=request_json('https://music.163.com/api/song/lyric?'+urllib.parse.urlencode(dict(id=ident,lv=-1,kv=-1,tv=-1)),referer='https://music.163.com/')
             if data.get('code')!=200:return (), 'provider_error'
             text=data.get('lrc',{}).get('lyric') or ''
         else:

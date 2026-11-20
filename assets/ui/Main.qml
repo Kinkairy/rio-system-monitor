@@ -37,7 +37,6 @@ Rio.PanelWindow {
    background: Rectangle { x: rotationSlider.leftPadding; y: rotationSlider.topPadding+rotationSlider.availableHeight/2-height/2; width: rotationSlider.availableWidth; height: 4; radius: 2; color: rotationSlider.hovered ? "#607451" : "#343d40" }
    handle: Rectangle { x: rotationSlider.leftPadding+rotationSlider.visualPosition*(rotationSlider.availableWidth-width); y: rotationSlider.topPadding+rotationSlider.availableHeight/2-height/2; width: 18; height: 18; radius: 9; color: rotationSlider.pressed || rotationSlider.hovered ? "#d1ff9b" : "#a7eb52"; border.width: rotationSlider.hovered ? 2 : 0; border.color: "#ecffd7" }
   }
-  ActionButton { objectName: "screenFirmwarePackage"; x: 208; y: 228; width: 190; height: 30; text: win.tr("Update screen firmware","更新屏幕固件"); enabled: !bridge.firmwareBusy && !bridge.storageBusy; onClicked: bridge.requestFirmware() }
   RioText { x: 24; y: 280; text: win.tr("Weather","天气"); color: "#dce3e6" }
   ActionButton { x: 20; y: 306; width: 332; text: bridge.cityLabel || win.tr("Select city","选择城市"); onClicked: { cityPopup.open(); searchField.forceActiveFocus() } }
   RefreshButton { objectName: "weatherRefreshButton"; x: 362; y: 306; onClicked: consentPopup.open() }
@@ -45,8 +44,7 @@ Rio.PanelWindow {
   ActionButton { objectName: "storageButton"; x: 20; y: 390; width: 332; text: bridge.storageBusy ? bridge.storageStatus : bridge.storageError ? win.tr("Operation failed · Choose content again","操作失败 · 请重新选择内容") : bridge.storageStored ? win.tr("Stored content · Manage","屏内内容 · 管理") : win.tr("Video or image · Up to 3.4 MB","视频或图片 · 不超过 3.4 MB"); onClicked: storagePopup.open() }
   RefreshButton { objectName: "restoreDefaultButton"; x: 362; y: 390; enabled: bridge.defaultAvailable && !bridge.storageBusy; Accessible.name: win.tr("Restore default","恢复默认"); ToolTip.visible: hovered; ToolTip.text: win.tr("Restore default","恢复默认"); onClicked: bridge.requestRestoreDefault() }
   RioText { x: 24; y: 445; text: win.tr("Temperature monitoring","温度监控"); color: "#dce3e6" }
-  RioText { x: 24; y: 464; width: bridge.monitorUpdateAvailable ? 205 : 318; text: bridge.monitorStatus; color: "#89979f"; font.pixelSize: 10; elide: Text.ElideRight }
-  ActionButton { objectName: "monitorUpdateButton"; x: 228; y: 440; width: 118; height: 26; visible: bridge.monitorUpdateAvailable; enabled: !bridge.monitorBusy; text: win.tr("Update component","更新温度组件"); onClicked: bridge.updateTemperatureComponent() }
+  RioText { x: 24; y: 464; width: 318; text: bridge.monitorStatus; color: "#89979f"; font.pixelSize: 10; elide: Text.ElideRight }
   RioSwitch { objectName: "monitorSwitch"; x: 358; y: 439; checked: bridge.monitorChecked; enabled: !bridge.monitorBusy && !bridge.monitorExternal; onToggled: bridge.setMonitorEnabled(checked) }
   RioText { x: 24; y: 490; text: win.tr("Music appreciation","音乐欣赏模式"); color: "#dce3e6" }
   RioSwitch { objectName: "musicSwitch"; x: 358; y: 484; checked: bridge.musicEnabled; onToggled: bridge.setMusicEnabled(checked) }
@@ -182,38 +180,18 @@ Rio.PanelWindow {
   Row { id: actionRow; x: 14; y: parent.height-48; width: parent.width-28; height: 34; spacing: 8 }
  }
  DialogPopup {
-  id: firmwarePopup; objectName: "firmwarePopup"; width: 360; height: 382
-  closePolicy: bridge.firmwareBusy ? Popup.NoAutoClose : Popup.CloseOnEscape
-  onClosed: { if(!bridge.firmwareBusy) bridge.cancelFirmware() }
-  ColumnLayout { anchors.fill: parent; spacing: 12
-   RioText { text: win.tr("Install RIO screen firmware","安装 RIO 屏幕固件"); font.pixelSize: 17; color: "#edf0f2" }
-   RioText { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 12; color: "#c2cdd0"
-    text: {
-     switch (bridge.firmwareState) {
-      case "available": return win.tr("The eM133-V3 update includes the original 7.2-second RIO startup animation. Start the update, then hold the bottom button while reconnecting USB. Release it after 3 seconds.", "eM133-V3 固件内置 7.2 秒 RIO 原版启动动画。开始后，按住屏底按钮插回 USB，约 3 秒后松开。")
-      case "waiting": return win.tr("Waiting for the screen in update mode. Hold the bottom button while reconnecting USB, then release after 3 seconds.", "等待圆屏进入升级模式。按住屏底按钮插回 USB，约 3 秒后松开。")
-      case "backing_up": return win.tr("Saving this screen’s 588 KiB protected partition to this computer.", "正在将这块屏的 588 KiB 保护区备份到本机。")
-      case "writing_bank": return win.tr("Writing and verifying the original animation. Keep USB connected.", "正在逐段写入并校验原版动画，请保持 USB 连接。")
-      case "wait_activation": return win.tr("Animation verified. Hold the bottom button and reconnect USB once more. Release after 3 seconds to activate the player.", "动画已校验。请再次按住屏底按钮插回 USB，约 3 秒后松开，RIO 会激活播放器。")
-      case "activating": return win.tr("Activating the player. Real-time monitoring will resume automatically.", "正在激活播放器，实时监控将自动连接。")
-      case "writing": return win.tr("Checking the installed firmware. Keep USB connected.", "正在核对屏幕固件，请保持 USB 连接。")
-      case "current": return win.tr("The screen already has this player and animation. Monitoring is reconnecting.", "屏幕已装好这个版本的播放器和动画，正在重新连接监控。")
-      case "done": return win.tr("Firmware verified. RIO is reconnecting to the screen.", "固件校验完成，RIO 正在重新连接圆屏。")
-      case "cancelled": return win.tr("Update cancelled.", "升级已取消。")
-      default: return win.tr("Update stopped. See the firmware log for details.", "升级已停止，详情见固件日志。")
-     }
-    }
-   }
-   RioText { Layout.fillWidth: true; Layout.fillHeight: true; wrapMode: Text.WrapAnywhere; font.pixelSize: 11; color: "#eb9595"; text: bridge.firmwareError }
-   ProgressBar { Layout.fillWidth: true; from: 0; to: 1; value: bridge.firmwareProgress; indeterminate: bridge.firmwareState==="waiting" || bridge.firmwareState==="wait_activation"; visible: bridge.firmwareBusy }
-   RowLayout { Layout.fillWidth: true; spacing: 12
-    ActionButton { objectName: "firmwareCancelButton"; Layout.fillWidth: true; text: bridge.firmwareBusy ? win.tr("Cancel","取消") : win.tr("Close","关闭"); enabled: !bridge.firmwareBusy || bridge.firmwareState==="waiting"; onClicked: { bridge.cancelFirmware(); if(!bridge.firmwareBusy) firmwarePopup.close() } }
-    ActionButton { objectName: "firmwareChooseFile"; Layout.fillWidth: true; visible: bridge.firmwareState==="available"; text: win.tr("Choose file…","选择文件…"); onClicked: bridge.chooseFirmwarePackage() }
-    ActionButton { objectName: "firmwareStartButton"; Layout.fillWidth: true; visible: bridge.firmwareState==="available"; text: win.tr("Confirm model · Start","确认型号 · 开始"); onClicked: bridge.startFirmware() }
+  id: firmwarePopup; objectName: "firmwarePopup"; width: 354; height: 155
+  visible: win.visible && (bridge.firmwareState==="waiting" || bridge.firmwareState==="wait_activation")
+  closePolicy: Popup.CloseOnEscape
+  ColumnLayout { anchors.fill: parent; spacing: 10
+   RioText { text: win.tr("Screen firmware update","屏幕固件更新"); font.pixelSize: 17; color: "#edf0f2" }
+   RioText { Layout.fillWidth: true; wrapMode: Text.WordWrap; font.pixelSize: 13; color: "#c2cdd0"
+    text: bridge.firmwareState==="wait_activation"
+     ? win.tr("Hold the screen button while reconnecting USB, then release after 3 seconds to activate the installed firmware.","请按住屏底按钮重新插入 USB，约 3 秒后松开，屏幕会启动已安装的固件。")
+     : win.tr("Hold the screen button while reconnecting USB, then release after 3 seconds. RIO will continue automatically.","请按住屏底按钮重新插入 USB，约 3 秒后松开。RIO 会自动继续更新。")
    }
   }
  }
- Connections { target: bridge; function onFirmwareChanged() { if(bridge.firmwareState!=="idle") firmwarePopup.open(); else firmwarePopup.close() } }
  DialogPopup {
   id: musicPopup; objectName: "musicPopup"; height: 410
   ColumnLayout { anchors.fill: parent; spacing: 12

@@ -12,11 +12,15 @@ class Track:
     playing: bool = False
     observed: float = 0
     cover: bytes = b''
+    recording_id: str = ''
+    sampled_position: bool = False
     @property
-    def key(self): return (self.source, self.title, self.artist, self.album)
+    def key(self):
+        identity = (self.source, self.title, self.artist, self.album)
+        return (*identity, self.recording_id) if self.recording_id else identity
     def position_at(self, now):
         if self.position is None or now-self.observed>3:return None
-        value=self.position+(max(0,now-self.observed) if self.playing else 0)
+        value=self.position+(max(0,now-self.observed) if self.playing and not self.sampled_position else 0)
         return max(0,min(self.duration,value)) if self.duration>0 else max(0,value)
 
 @dataclass(frozen=True)
@@ -75,7 +79,7 @@ class AutomaticMusicView:
         if not snapshot['enabled']:
             self.active=False;self.idle_since=None;return False
         track=snapshot['track']
-        playing=(snapshot['status']=='ready' and track.playing and 0<=now-track.observed<=3)
+        playing=((snapshot['status']=='ready' and track.playing or snapshot['status']=='audio_only') and 0<=now-track.observed<=3)
         if playing:self.active=True;self.idle_since=None
         elif self.active:
             if self.idle_since is None:self.idle_since=now

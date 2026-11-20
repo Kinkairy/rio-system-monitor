@@ -1,6 +1,7 @@
 """Windows-only providers. Lazy imports keep monitor mode independent."""
 import asyncio,datetime,time,threading,sys
-from .state import Track,Audio,Spectrum,select_session
+from .state import Track,Audio,Spectrum
+from .netease import SOURCE as NETEASE_FALLBACK, NetEasePlayback, append_fallback, choose_session, has_native_netease
 
 async def read_cover(reference):
     if reference is None:return b''
@@ -28,7 +29,12 @@ class CoverCache:
         return self.data
 
 class MediaSessions:
-    def __init__(self,publish,preference):self.publish=publish;self.preference=preference;self.stop=threading.Event();self.thread=None
+    def __init__(self,publish,preference):
+        self.publish=publish
+        self.preference=preference
+        self.stop=threading.Event()
+        self.thread=None
+        self.netease=NetEasePlayback()
     def start(self):
         self.thread=threading.Thread(target=self.run,daemon=True,name='RIO-media');self.thread.start()
     def run(self):
@@ -39,6 +45,7 @@ class MediaSessions:
             try:asyncio.run(self.poll())
             finally:uninit_apartment()
         except Exception:self.publish(Track(),[],'media_unavailable')
+        finally:self.netease.close()
     async def poll(self):
         from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as Manager
         manager=await Manager.request_async();previous='';covers=CoverCache()
@@ -48,9 +55,21 @@ class MediaSessions:
                 for session in manager.get_sessions():
                     try:items.append((session.source_app_user_model_id,int(session.get_playback_info().playback_status)==4,session))
                     except Exception:continue
-                chosen=select_session(items,self.preference(),previous)
+                preference=self.preference()
+                if has_native_netease(items):
+                    self.netease.close()
+                else:
+                    try:
+                        track=self.netease.observe(timing=not preference or preference==NETEASE_FALLBACK)
+                        items=append_fallback(items,track)
+                    except Exception:pass  # Optional fallback must not break SMTC.
+                chosen=choose_session(items,preference,previous)
                 sources=[dict(id=x[0],label=x[0]) for x in items]
                 if chosen is None:self.publish(Track(),sources,'no_session');previous=''
+                elif chosen[0]==NETEASE_FALLBACK:
+                    track=chosen[2]
+                    self.publish(track,sources,'ready' if track.position is not None else 'audio_only')
+                    previous=chosen[0]
                 else:
                     app,playing,session=chosen;props=await asyncio.wait_for(session.try_get_media_properties_async(),2)
                     timeline=session.get_timeline_properties();position=None;duration=0

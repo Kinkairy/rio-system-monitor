@@ -83,13 +83,13 @@ class BuiltInFirmware(unittest.TestCase):
         guard=patch.object(update,'FIRST_GUARD',seg.crc(self.screen.gap[:seg.SECTOR]))
         guard.start();self.addCleanup(guard.stop)
 
-    def run_update(self,install=True):
+    def run_update(self,install=True,factory_only=False):
         with patch.object(seg,'RioLoader',side_effect=lambda port:port):
             return update.run(self.screen,self.release,self.folder,install,self.events.append,
-                              lambda state,p:None,self.screen)
+                              lambda state,p:None,self.screen,factory_only=factory_only)
 
     def test_factory_update_preserves_gap_and_current_screen_is_skipped(self):
-        self.assertEqual(self.run_update(),'segments_verified_and_started')
+        self.assertEqual(self.run_update(factory_only=True),'segments_verified_and_started')
         self.assertEqual(bytes(self.screen.bank),self.release.bank)
         self.assertEqual(self.run_update(),'already_installed_and_verified')
         self.assertEqual(self.screen.low_writes,[seg.crc(self.release.helper.data),seg.crc(self.release.player.data)])
@@ -99,6 +99,15 @@ class BuiltInFirmware(unittest.TestCase):
             self.screen.head=seg.crc(old)
             self.assertEqual(self.run_update(False),'compatible_for_animation')
         self.assertFalse(self.screen.low_writes)
+
+    def test_automatic_mode_skips_every_rio_firmware_and_unknown_images(self):
+        for data in (*self.release.previous,self.release.player.data):
+            self.screen.head=seg.crc(data)
+            self.assertEqual(self.run_update(factory_only=True),'rio_firmware_present')
+        self.screen.head=0x12345678
+        self.assertEqual(self.run_update(factory_only=True),'unrecognized_firmware')
+        self.assertFalse(self.screen.low_writes)
+        self.assertFalse(any(self.folder.iterdir()))
 
     def test_resume_after_second_button_timeout_writes_only_player(self):
         self.screen.drop_before_activation=True

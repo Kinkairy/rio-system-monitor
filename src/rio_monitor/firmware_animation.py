@@ -173,12 +173,18 @@ class Connections:
             time.sleep(.4)
         raise TimeoutError('Waiting for activation timed out. Reopen the update with the screen in boot mode to resume.')
 
-def run(port, release, backups, install, record, stage, connections):
+def run(port, release, backups, install, record, stage, connections, *, factory_only=False):
     loader=seg.RioLoader(port)
     before, checks=flash_snapshot(loader)
     current=before[seg.LOW_END]
     previous={seg.crc(data):data for data in release.previous}
     helper_crc=seg.crc(release.helper.data)
+    if factory_only:
+        if current in previous or current==seg.crc(release.player.data):
+            loader.run()
+            return 'rio_firmware_present'
+        if current not in (FACTORY_CRC,helper_crc):
+            return 'unrecognized_firmware'
     full=bank_matches(before,release.bank)
     record(dict(stage='identified', board=seg.BOARD, application_crc=current, animation_verified=full))
     if current==seg.crc(release.player.data):

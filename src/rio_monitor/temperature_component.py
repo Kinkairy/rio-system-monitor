@@ -1,6 +1,6 @@
 """Unprivileged sensor discovery and explicit one-time temperature installation.
 
-Startup never requests elevation. The elevated helper installs a protected service;
+The helper migrates an enabled legacy RIO service and handles explicit installation;
 ordinary reads and the on/off control use separate ProgramData directories.
 """
 import ctypes,json,math,os,subprocess,threading,time
@@ -54,7 +54,7 @@ def start_existing_service():
     except (OSError,subprocess.TimeoutExpired):return False
 
 def elevate_helper(helper,stop,operation):
-    """Only called in response to the user's temperature-toggle action."""
+    """Windows handles authorization for maintenance of the protected RIO service."""
     from ctypes import wintypes as w
     class Execute(ctypes.Structure):
         _fields_=[('cbSize',w.DWORD),('fMask',w.ULONG),('hwnd',w.HWND),('lpVerb',w.LPCWSTR),('lpFile',w.LPCWSTR),('lpParameters',w.LPCWSTR),('lpDirectory',w.LPCWSTR),('nShow',ctypes.c_int),('hInstApp',w.HINSTANCE),('lpIDList',ctypes.c_void_p),('lpClass',w.LPCWSTR),('hkeyClass',w.HKEY),('dwHotKey',w.DWORD),('hIcon',w.HANDLE),('hProcess',w.HANDLE)]
@@ -89,7 +89,7 @@ class TemperatureComponent:
         self.lock=threading.RLock();self.stop=threading.Event();self.wake=threading.Event();self.thread=None;self.process=None
         self.value=None;self.source='unavailable';self.stamp=0.;self.native_value=None;self.native_stamp=0.;self.installed=False;self.state='detecting';self.busy=False;self.install_requested=False;self.failure=None;self.reboot=False;self.command_until=0.
         self.updater=updater
-        self.update_available=False
+        self.update_attempted=False
         self.update_requested=False
         self.uninstaller=uninstaller;self.uninstall_requested=False;self.operation='installing';self.external=False;self.removed=False;self.remove_reboot=False
         if start:self.thread=threading.Thread(target=self.run,daemon=True);self.thread.start()
@@ -103,7 +103,7 @@ class TemperatureComponent:
             return self.value if time.monotonic()-self.stamp<=5 and valid_temperature(self.value) else None
     def snapshot(self):
         with self.lock:
-            return dict(enabled=self.enabled,checked=self.enabled and (self.busy or self.installed or self.state=='existing'),busy=self.busy,state=self.operation if self.busy else self.state,installed=self.installed,external=self.external,update_available=self.update_available)
+            return dict(enabled=self.enabled,checked=self.enabled and (self.busy or self.installed or self.state=='existing'),busy=self.busy,state=self.operation if self.busy else self.state,installed=self.installed,external=self.external)
     def request(self,enabled):
         with self.lock:
             if self.busy or self.external:return
@@ -124,16 +124,6 @@ class TemperatureComponent:
             elif enabled:self.state='starting' if self.installed else 'existing'
             elif not enabled:self.state='off';self.value=None
         self.wake.set()
-    def request_update(self):
-        with self.lock:
-            if self.busy or not self.installed or not self.update_available:
-                return
-            self.busy=True
-            self.operation='updating'
-            self.update_requested=True
-            self.failure=None
-        self.wake.set()
-
     def probe_existing(self):
         if not self.helper.is_file():return None
         try:
@@ -150,12 +140,9 @@ class TemperatureComponent:
         installed=service_installed();row=read_status() if installed else None
         with self.lock:
             self.installed=installed
-            if not installed:
-                self.update_available=False
-            elif row:
-                # Corrected helpers always include the selected sensor, even when
-                # no reading is available. Legacy helpers emitted only a number.
-                self.update_available='sensor' not in row
+            legacy = bool(row and 'sensor' not in row)
+            if not installed or (row and not legacy):
+                self.update_attempted=False
             if self.remove_reboot:self.state='uninstall_reboot';return
             if self.reboot:self.state='reboot';return
             if not self.enabled and installed:self.value=None;self.state=self.failure or 'off';self.external=False;return
@@ -164,10 +151,16 @@ class TemperatureComponent:
                 if time.monotonic()<self.command_until:self.state='starting'
                 else:self.enabled=False;self.state='off'
                 return
-            if self.update_available:
+            if legacy:
                 self.value=None
                 self.external=False
-                self.state=self.failure or 'update_available'
+                if not self.update_attempted and not self.busy and not self.stop.is_set():
+                    self.update_attempted=True
+                    self.busy=True
+                    self.operation='updating'
+                    self.update_requested=True
+                    self.wake.set()
+                self.state=self.failure or 'updating'
                 return
             if row and row['status'] in ('ready','unsupported','error'):
                 self.value=row['cpu_temperature'];self.stamp=time.monotonic();self.source=row.get('source','RIO service');self.state=row['status'];self.external=False;return
@@ -218,7 +211,7 @@ class TemperatureComponent:
                 # when another monitor has just exposed a usable existing interface.
                 if self.installed and start_existing_service():self.stop.wait(1)
                 self.poll()
-                try:result='installed' if self.state in ('existing','ready','unsupported') else self.installer(self.helper,self.stop)
+                try:result='installed' if self.state in ('existing','ready','unsupported') or self.state=='updating' else self.installer(self.helper,self.stop)
                 except OSError:result='failed'
                 with self.lock:
                     self.busy=False;self.installed=service_installed();self.reboot=result=='reboot'

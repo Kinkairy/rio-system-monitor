@@ -61,28 +61,6 @@ class Bridge(QObject):
  firmwareBusy=Property(bool,lambda self:self.firmware.snapshot()['busy'],notify=firmwareChanged)
  firmwareProgress=Property(float,lambda self:self.firmware.snapshot()['progress'],notify=firmwareChanged)
  firmwareError=Property(str,lambda self:self.firmware.snapshot()['error'],notify=firmwareChanged)
- @Slot()
- def requestFirmware(self):
-  if self.capture or self.firmware.snapshot()['busy']:return
-  try:self.firmware.select_bundled()
-  except (OSError,ValueError) as exc:self.tell(str(exc));return
-  self.firmwareChanged.emit()
- firmwareSegmented=Property(bool,lambda self:self.firmware.snapshot()['segmented'],notify=firmwareChanged)
- @Slot()
- def chooseFirmwarePackage(self):
-  if self.capture or self.firmware.snapshot()['busy']:return
-  zh=self.s.language=='zh'
-  path,_=QFileDialog.getOpenFileName(None,'选择屏幕固件包' if zh else 'Select screen firmware package','','RIO firmware (*.zip)')
-  if path:
-   try:self.firmware.select_package(path)
-   except (OSError,ValueError) as exc:self.tell(str(exc));return
-   self.firmwareChanged.emit()
- @Slot()
- def startFirmware(self):
-  if self.capture:return
-  self.firmware.start();self.firmwareChanged.emit()
- @Slot()
- def cancelFirmware(self):self.firmware.dismiss();self.firmwareChanged.emit()
  def getLanguage(self):return self.s.language
  language=Property(str,getLanguage,notify=changed)
  rotation=Property(int,lambda self:self.s.rotation,notify=changed)
@@ -125,7 +103,6 @@ class Bridge(QObject):
  footerProgress=Property(float,getFooterProgress,notify=changed)
  monitorChecked=Property(bool,lambda self:self.monitor.snapshot()['checked'],notify=changed)
  monitorBusy=Property(bool,lambda self:self.monitor.snapshot()['busy'],notify=changed)
- monitorUpdateAvailable=Property(bool,lambda self:self.monitor.snapshot().get('update_available',False),notify=changed)
  monitorExternal=Property(bool,lambda self:self.monitor.snapshot().get('external',False),notify=changed)
  storageBusy=Property(bool,lambda self:self.storage.snapshot()['busy'],notify=changed)
  storageWriting=Property(bool,lambda self:self.storage.snapshot()['writing'],notify=changed)
@@ -207,16 +184,13 @@ class Bridge(QObject):
   labels={'detecting':('Checking existing sensors…','正在检测现有传感器…'),'missing':('Enable to install · Administrator approval once','首次开启时安装 · 需管理员确认'),'installing':('Installing temperature component…','正在安装温度监控组件…'),'existing':('Using existing sensor interface','使用现有传感器接口'),'ready':('Installed · Running','已安装 · 运行正常'),'starting':('Starting temperature monitoring…','正在启用温度监控…'),'off':('Monitoring off','温度监控已关闭'),'unsupported':('Installed · CPU sensor unavailable','已安装 · 暂无可用 CPU 温度'),'error':('Component unavailable · Re-enable to repair','组件异常 · 重新开启可修复'),'cancelled':('Installation cancelled','已取消安装'),'reboot':('Installed · Windows restart required','已安装 · 需重启 Windows')}
   snapshot=self.monitor.snapshot();state=snapshot['state']
   labels.update({'existing':('Existing sensor interface · No installation needed','已检测到现有接口 · 无需安装'),'uninstalling':('Removing our temperature component…','正在卸载我们安装的组件…'),'removed':('Our component removed','我们安装的组件已卸载'),'uninstall_reboot':('Removed · Windows restart required','已卸载 · 重启后完成驱动移除')})
-  labels.update({'update_available':('Update to read the CPU temperature','更新组件后读取 CPU 温度'),'updating':('Updating temperature component…','正在更新温度组件…'),'update_cancelled':('Update cancelled · Click to retry','已取消更新，可点击重试'),'update_failed':('Update failed · Click to retry','组件更新失败，可点击重试')})
+  labels.update({'updating':('Updating temperature component…','正在更新温度组件…'),'update_cancelled':('Windows authorization cancelled','Windows 授权已取消'),'update_failed':('Temperature component update failed','温度组件更新失败')})
   if state=='off':labels['off']=('Installed · Monitoring off','已安装 · 温度监控已关闭') if snapshot['installed'] else ('Enable to detect sensors or install','开启时检测，缺少时安装')
   return labels.get(state,labels['missing'])[1 if self.s.language=='zh' else 0]
  monitorStatus=Property(str,getMonitorStatus,notify=changed)
  @Slot(bool)
  def setMonitorEnabled(self,value):
   self.monitor.request(value);self.applySettings(temperature_monitor=self.monitor.enabled);self.changed.emit()
- @Slot()
- def updateTemperatureComponent(self):
-  if not self.capture:self.monitor.request_update();self.changed.emit()
  def tell(self,text,source=None):
   self._notice=text;self._notice_source=source;self.noticeChanged.emit()
  def updateUsb(self,state,now=None):
@@ -363,10 +337,14 @@ class Bridge(QObject):
    except Exception as ex:self.mail.put(('locate',gen,None,str(ex)))
   threading.Thread(target=run,daemon=True).start()
  def consume(self):
-  if not self.capture and self.firmware.offer(self.storage.session.snapshot()['usb_protocol']):
-   if self.win:self.show()
   firmware_snapshot=self.firmware.snapshot()
-  if firmware_snapshot!=self.firmware_snapshot:self.firmware_snapshot=firmware_snapshot;self.firmwareChanged.emit()
+  if firmware_snapshot!=self.firmware_snapshot:
+   previous=self.firmware_snapshot['state']
+   self.firmware_snapshot=firmware_snapshot
+   self.firmwareChanged.emit()
+   if previous!=firmware_snapshot['state'] and firmware_snapshot['state'] in ('waiting','wait_activation') and self.tray and self.win and not self.win.isVisible():
+    message='按住屏底按钮插回 USB，约 3 秒后松开。' if self.s.language=='zh' else 'Hold the screen button while reconnecting USB, then release after 3 seconds.'
+    self.tray.showMessage('RIO System Monitor',message)
   if self.updater:
    update_snapshot=self.updater.snapshot()
    if update_snapshot!=self.update_snapshot:self.update_snapshot=update_snapshot;self.changed.emit()
@@ -533,6 +511,7 @@ def main():
   update_timer=QTimer(app);update_timer.setInterval(6*60*60*1000);update_timer.timeout.connect(updater.check);update_timer.start()
   QTimer.singleShot(10000,updater.check);app.aboutToQuit.connect(updater.install_on_exit)
  if not args.ui_capture:QTimer.singleShot(500,session.start)
+ if not capture_mode:bridge.firmware.start_watching()
  if args.fangcun_capture:
   from .fangcun_capture import capture
   capture(app,bridge,bridge.game,bridge.fangcun.service,session,provider,game_provider,args.fangcun_capture)

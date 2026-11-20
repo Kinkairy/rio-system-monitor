@@ -1,8 +1,4 @@
-"""One explicit eM133-V3 upgrade, shared by the settings guide and manual CLI.
-
-Firmware is an external, SHA-pinned build input. Discovery never arms writing.
-The original loader/profile must match before any programming-mode command.
-"""
+"""Identify supported factory screens and install the bundled RIO firmware."""
 import datetime,hashlib,json,os,sys,threading,time
 from pathlib import Path
 from . import firmware_segments as segments
@@ -113,28 +109,82 @@ class FirmwareUpdate:
     def __init__(self,session,folder,log_folder,ports=boot_ports,opener=open_port,detector=stock_paths):
         self.session=session;self.folder=Path(folder);self.logs=Path(log_folder)
         self.ports=ports;self.opener=opener;self.detector=detector;self.lock=threading.RLock()
-        self.thread=None;self.cancel_event=threading.Event();self.offered=False;self.offered_generation=None
+        self.thread=None;self.cancel_event=threading.Event()
+        self.watcher=None
+        self.watch_stop=threading.Event()
+        self.last_stock=None
+        self.last_boot=None
         self.segment_package=None
         self.data=dict(state='idle',progress=0.,error='',busy=False,segmented=False)
     def snapshot(self):
         with self.lock:return dict(self.data)
     def update(self,**values):
         with self.lock:self.data.update(values)
-    def offer(self,protocol):
-        generation=self.session.attachment_generation
-        if self.offered_generation!=generation:self.offered=False
-        if protocol=='levetop-emonitor' and not self.offered and self.snapshot()['state']=='idle':
+    def start_watching(self):
+        if not (self.folder/firmware_release.FILENAME).is_file() or self.watcher is not None:
+            return
+        self.watcher=threading.Thread(target=self._watch,daemon=True,name='RIO-firmware-detect')
+        self.watcher.start()
+
+    def _watch(self):
+        while not self.watch_stop.is_set():
             try:
-                output=self.session.output
-                if output is None or output.path not in self.detector():return False
-            except (ImportError,OSError):return False
-            self.offered=True;self.offered_generation=generation
-            if (self.folder/firmware_release.FILENAME).is_file():
-                try:self.select_bundled()
-                except (OSError,ValueError) as exc:self.update(state='error',error=str(exc))
-            else:self.update(state='available')
-            return True
-        return False
+                self.detect()
+            except (ImportError,OSError,ValueError,RuntimeError):
+                # Temporary absence or a device in transition is retried by discovery.
+                pass
+            self.watch_stop.wait(1)
+
+    def detect(self):
+        if self.snapshot()['busy'] or self.watch_stop.is_set():
+            return False
+        with self.session.lock:
+            if self.session.resource_active or self.session.mode=='firmware' or self.session.stop.is_set():
+                return False
+            output=self.session.output
+            generation=self.session.attachment_generation
+            if output is not None and not output.error:
+                if output.capabilities.protocol!='levetop-emonitor' or not output.sent:
+                    self.last_boot=None
+                    return False
+                path=output.path
+            else:
+                path=None
+        boot_present=False
+        if path is not None:
+            token=(generation,path)
+            if self.last_stock==token:
+                return False
+            if self.detector()!=[path] or self.session.paths()!=[path]:
+                return False
+            self.last_stock=token
+            self.last_boot=None
+        else:
+            paths=self.session.paths()
+            if paths:
+                # A screen being opened by the monitor worker has not completed its handshake yet.
+                if self.session.mode!='stored' or len(paths)!=1 or self.detector()!=paths:
+                    return False
+                token=(generation,paths[0])
+                if self.last_stock==token:return False
+                self.last_stock=token
+                self.last_boot=None
+            else:
+                self.last_stock=None
+                ports=self.ports()
+                if not ports:
+                    self.last_boot=None
+                    return False
+                if len(ports)!=1 or ports[0]==self.last_boot:return False
+                self.last_boot=ports[0]
+                boot_present=True
+        try:
+            self.select_bundled()
+        except (OSError,ValueError) as exc:
+            self.update(state='error',error=str(exc))
+            return False
+        return self.start(automatic=True,boot_present=boot_present)
+
     def dismiss(self):
         with self.lock:
             if self.data['state']=='waiting':self.cancel_event.set()
@@ -149,14 +199,14 @@ class FirmwareUpdate:
             if self.data['busy']:raise RuntimeError('An upgrade is already active')
             self.segment_package=package
             self.update(state='available',progress=0.,error='',segmented=True)
-    def start(self):
+    def start(self,automatic=False,boot_present=False):
         with self.lock:
-            if self.data['busy'] or self.data['state']!='available':return False
-            self.data.update(state='waiting',progress=0.,error='',busy=True)
+            if self.watch_stop.is_set() or self.data['busy'] or self.data['state']!='available':return False
+            self.data.update(state='checking' if boot_present else 'waiting',progress=0.,error='',busy=True)
             self.cancel_event.clear()
-            self.thread=threading.Thread(target=self._run,daemon=True,name='RIO-firmware-update')
+            self.thread=threading.Thread(target=self._run,args=(automatic,),daemon=True,name='RIO-firmware-update')
             self.thread.start();return True
-    def _run(self):
+    def _run(self,automatic=False):
         port=None;owned=False;path=None;journal=dict(events=[],error=None)
         try:
             package=self.segment_package
@@ -187,6 +237,7 @@ class FirmwareUpdate:
             def record(item):
                 journal['events'].append(item)
                 save_journal(path,journal)
+            if automatic:self.last_boot=ports[0]
             port=self.opener(ports[0])
             # Disable cancellation/exit before the bounded handshake+write phase.
             with self.lock:
@@ -196,11 +247,11 @@ class FirmwareUpdate:
                 io=firmware_animation.Connections(self.ports,self.opener,self.session.paths)
                 journal['result']=firmware_animation.run(
                     port,package,self.logs/'backups',True,record,
-                    lambda state,p:self.update(state=state,progress=p),io)
+                    lambda state,p:self.update(state=state,progress=p),io,factory_only=automatic)
             elif package:
                 journal['result']=run_segments(port,package,True,journal,record,lambda p:self.update(progress=p))
             else:program(port,plan,record,lambda p:self.update(progress=p))
-            self.update(state='current' if journal.get('result')=='already_installed_and_verified' else 'done',progress=1.)
+            self.update(state='current' if journal.get('result') in ('already_installed_and_verified','rio_firmware_present','unrecognized_firmware') else 'done',progress=1.)
         except segments.EraseScopeUnknown as exc:
             journal.update(error=str(exc),result='erase_scope_unproven');self.update(state='scope_unknown',error='')
         except Exception as exc:
@@ -220,9 +271,11 @@ class FirmwareUpdate:
     def close(self):
         with self.lock:
             if self.data['state']=='writing' or self.data['busy'] and self.data['state']!='waiting':return False
+            self.watch_stop.set()
             self.cancel_event.set()
+        if self.watcher:self.watcher.join(2)
         if self.thread:self.thread.join(2)
-        return not self.thread or not self.thread.is_alive()
+        return not (self.watcher and self.watcher.is_alive() or self.thread and self.thread.is_alive())
 
 def main(argv=None):
     import argparse
