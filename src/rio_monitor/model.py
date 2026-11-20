@@ -28,6 +28,31 @@ class Sample:
             return None
         return self.value if 0 <= now - self.timestamp <= ttl else None
 
+class TemperatureDisplay:
+    """Smooth the displayed CPU temperature between fresh samples."""
+
+    TIME_CONSTANT = 5.0
+
+    def __init__(self):
+        self.reading = None
+
+    def update(self, sample: Sample | None, now: float) -> float | None:
+        value = sample.current(now) if sample is not None else None
+        if value is None:
+            self.reading = None
+            return None
+
+        previous = self.reading
+        if previous is not None and previous.source == sample.source:
+            base = previous.current(sample.timestamp)
+            if base is not None:
+                elapsed = sample.timestamp - previous.timestamp
+                weight = -math.expm1(-elapsed / self.TIME_CONSTANT)
+                value = base + (value - base) * weight
+        self.reading = Sample(value, sample.timestamp, sample.source)
+        return value
+
+
 class Spring:
     """Damped movement; finite steps and bounded overshoot, no synthetic activity."""
     def __init__(self, value=0.0, stiffness=180, damping=21):

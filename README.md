@@ -4,11 +4,11 @@
 
 ## 当前版本与目录
 
-当前主程序源码版本为 **rc0.1.24**。在 RIO 设置底部点击「Check updates」，发现新版后点击「Update to rc0.1.24」。下载校验完成后，RIO 会在空闲时重启并应用更新。Windows 文件属性与程序内版本一致。
+当前主程序版本为 **rc0.1.24**。温度平滑构建发布在 [v0.1.24](https://github.com/Kinkairy/rio-system-monitor/releases/tag/v0.1.24)。低于 0.1.24 的版本可在 RIO 设置底部点击「Check updates」并按提示更新。旧的 rc0.1.24 构建可从发布页下载对应的 EXE。
 
 网易云音乐的 Windows 桌面版收进托盘后也可继续在 RIO 预览中显示歌曲和同步歌词。该补充识别在网易云 **3.1.43.205627 x64** 上验证。详见[音乐模式](docs/music-mode.md#netease-desktop-tray-playback-rc0124)。
 
-CPU 温度继续优先读取 Intel 封装或 AMD 芯片传感器。已启用的旧 RIO 温度服务可在后台升级，需要 Windows 授权时会出现系统提示。
+CPU 温度继续优先读取 Intel 封装或 AMD 芯片传感器。温度数字和仪表采用 5 秒平滑，历史曲线显示采样值。已启用的旧 RIO 温度服务可在后台升级，需要 Windows 授权时会出现系统提示。
 
 当前版本包含歌词修正：移除不稳定的 QQ 桌面搜索，兼容歌手显示别名；先查播放器自身接口，获取不到再并发查询其他 QQ/网易云/酷狗/LRCLIB 接口，先取得有效同步歌词的先显示。歌名区域缩为居中的 240px，超出后往返滚动，避免遮住侧边仪表。`rc0.1` 标签保留为原有基准。修正与验证记录见[音乐模式说明](docs/music-mode.md#fix-20261023-qq-lyrics-failed-online-lyric-lookup)。
 

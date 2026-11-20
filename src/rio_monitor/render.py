@@ -1,7 +1,7 @@
 from pathlib import Path
 from PIL import Image,ImageDraw,ImageFont,ImageChops
 import math,time,datetime,sys,json
-from .model import Spring
+from .model import Spring, TemperatureDisplay
 
 from .typography import RollingText
 from .effects import TemperatureSheen
@@ -69,6 +69,7 @@ class Renderer:
         self.clock_variable=self.digits.font(next(n for n in range(80,10,-1) if self.digits.font(n).getbbox('0')[3]-self.digits.font(n).getbbox('0')[1]<=self.clockfont.getbbox('0')[3]-self.clockfont.getbbox('0')[1]))
         self.charts={k:UsageChart() for k in ("cpu","gpu")}
         self.sheen=TemperatureSheen()
+        self.temperature_display = TemperatureDisplay()
         self.weather=WeatherPanel(self.assets)
         self.gpu_charts={}
         self.last=None;self.history=[];self.last_sample=None
@@ -89,7 +90,9 @@ class Renderer:
         dt=1/30 if self.last is None else max(0,now-self.last);self.last=now
         values={k:v.current(now) for k,v in samples.items()}
         im=self.background.copy();d=ImageDraw.Draw(im)
-        cpu,gpu,temp=(values.get(k) for k in ('cpu','gpu','temperature'))
+        cpu,gpu=(values.get(k) for k in ('cpu','gpu'))
+        sample = samples.get('temperature')
+        temp = self.temperature_display.update(sample, now)
         used,total=values.get('ram_used'),values.get('ram_total')
         ram=used/total*100 if used is not None and total and total>0 else None
         for key,target in [('cpu',cpu),('gpu',gpu),('ram',ram),('temperature',temp)]:
@@ -141,9 +144,8 @@ class Renderer:
             active=Image.new('L',gauge.size);ImageDraw.Draw(active).pieslice((60-gx,25-gy,1195-gx,1159-gy),180,180+progress*1.8,fill=255)
             gauge.paste(self.gauge_colors,(0,0),active)
         im.paste(gauge,(gx,gy),self.gauge_mask)
-        sample=samples.get('temperature')
         if sample and sample.timestamp!=self.last_sample:
-            self.history.append(temp);self.history=self.history[-120:];self.last_sample=sample.timestamp
+            self.history.append(values.get('temperature'));self.history=self.history[-120:];self.last_sample=sample.timestamp
         # The curve is actual temperature history, gaps stay gaps.
         segments=[];pts=[]
         for i,v in enumerate(self.history):
