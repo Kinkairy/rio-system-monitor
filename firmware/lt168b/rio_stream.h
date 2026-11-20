@@ -6,13 +6,13 @@
 /* Portable receiver core only. USB, clocks, LCD, boot entry are NOT supplied. */
 #define RIO_PIXELS (480u * 480u)
 #define RIO_TILE_COUNT 450u
-#define RIO_PACKET_MAX 1048u
+#define RIO_PACKET_MAX 8218u /* header + count/predictor + up to8tiles */
 typedef struct {
     uint16_t *pixels; /* caller-owned single native-endian RGB565 framebuffer */
     uint32_t session, frame, last_frame, completed;
     uint16_t expected, received, used, need;
     uint8_t active, valid, delta, seen[57];
-    uint8_t decoded[1024]; /* bounded scratch, never an unvalidated framebuffer */
+    uint8_t decoded[8192]; /* bounded scratch, never an unvalidated framebuffer */
     uint8_t packet[RIO_PACKET_MAX];
     /* Board-owned arena: fitting frames store resolved native tiles, larger
      * frames store validated wire bytes; entries stay off scanout until present. */

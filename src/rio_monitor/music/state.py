@@ -14,6 +14,7 @@ class Track:
     cover: bytes = b''
     recording_id: str = ''
     sampled_position: bool = False
+    cover_url: str = ''
     @property
     def key(self):
         identity = (self.source, self.title, self.artist, self.album)

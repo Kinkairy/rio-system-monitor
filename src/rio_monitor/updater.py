@@ -1,11 +1,14 @@
-"""Anonymous GitHub Release updates, applied only after the running EXE exits."""
+"""Anonymous Gitee program updates, applied only after the running EXE exits."""
 import hashlib,json,os,re,subprocess,sys,threading,urllib.request
 from pathlib import Path
+from urllib.error import HTTPError
 from . import __version__
 
 REPOSITORY='Kinkairy/rio-system-monitor'
 ASSET_NAME='RIO-System-Monitor.exe'
-API_URL=f'https://api.github.com/repos/{REPOSITORY}/releases/latest'
+PROGRAM_REPOSITORY = 'kinkairy/rio-system-monitor-updates'
+PROGRAM_API = f'https://gitee.com/api/v5/repos/{PROGRAM_REPOSITORY}/releases'
+PROGRAM_DOWNLOAD = f'https://gitee.com/{PROGRAM_REPOSITORY}/releases/download'
 
 
 def version_key(value):
@@ -14,17 +17,39 @@ def version_key(value):
     return tuple(int(part or 0) for part in match.groups()) if match else (0,0,0,0)
 
 
+def release_json(url):
+    request = urllib.request.Request(url, headers={
+        'User-Agent': 'RIO-System-Monitor/' + __version__,
+        'Accept': 'application/json',
+    })
+    with urllib.request.urlopen(request, timeout=8) as response:
+        return json.loads(response.read(1_000_000))
+
+
 def latest_asset(current=__version__):
-    request=urllib.request.Request(API_URL,headers={'User-Agent':'RIO-System-Monitor/'+__version__,'Accept':'application/vnd.github+json'})
-    with urllib.request.urlopen(request,timeout=8) as response:release=json.load(response)
-    if release.get('draft') or release.get('prerelease') or version_key(release.get('tag_name'))<=version_key(current):return None
-    for asset in release.get('assets',[]):
-        if asset.get('name')!=ASSET_NAME or asset.get('state')!='uploaded':continue
-        if not re.fullmatch('sha256:[0-9a-fA-F]{64}',asset.get('digest') or ''):continue
-        prefix=f'https://github.com/{REPOSITORY}/releases/download/'
-        if not str(asset.get('browser_download_url','')).startswith(prefix):continue
-        return dict(asset,version=release['tag_name'])
-    return None
+    try:
+        release = release_json(PROGRAM_API + '/latest')
+    except HTTPError as error:
+        # Gitee reports 404 for latest on a new public repository with no releases.
+        if error.code == 404 and release_json(PROGRAM_API + '?per_page=1') == []:
+            return None
+        raise
+    tag = release.get('tag_name')
+    if release.get('draft') or release.get('prerelease') or version_key(tag) <= version_key(current):
+        return None
+    checksums = re.findall(r'(?m)^SHA256: ([0-9a-fA-F]{64})[ \t]*\r?$', release.get('body') or '')
+    release_id = release.get('id')
+    if len(checksums) != 1 or type(release_id) is not int or release_id <= 0:
+        return None
+    attachments = release_json(f'{PROGRAM_API}/{release_id}/attach_files')
+    matches = [item for item in attachments if isinstance(item, dict) and item.get('name') == ASSET_NAME]
+    if len(matches) != 1:
+        return None
+    size = matches[0].get('size')
+    if type(size) is not int or size <= 0:
+        return None
+    return dict(name=ASSET_NAME, version=tag, size=size, digest='sha256:' + checksums[0].lower(),
+                browser_download_url=f'{PROGRAM_DOWNLOAD}/{tag}/{ASSET_NAME}')
 
 
 def download_asset(asset,directory,stop=None,progress=None):

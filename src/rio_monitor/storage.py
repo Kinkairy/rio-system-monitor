@@ -77,14 +77,23 @@ class DisplaySession:
     def live(self):
         with self.lock:return self.output is not None and not self.output.error
     @property
+    def attached_path(self):
+        with self.lock:
+            if self.output and not self.output.error:
+                return self.output.path
+            if self.mode=='stored':
+                return self._last_path
+            return None
+    @property
     def needs_frame(self):
         with self.lock:return self.output is not None and not self.output.error and self.output.needs_frame
     def submit(self,frame,rotation=0,rotation_offsets=None):
         from .display_protocols import LEGACY
         with self.lock:
             if self.output and not self.output.error:
-                protocol=getattr(self.output,'capabilities',LEGACY).protocol
-                angle=(rotation+(rotation_offsets or {}).get(protocol,0))%360
+                caps=getattr(self.output,'capabilities',LEGACY)
+                rotation_profile=getattr(caps,'rotation_profile',None) or caps.protocol
+                angle=(rotation+(rotation_offsets or {}).get(rotation_profile,0))%360
                 # Combine mounting calibration and user rotation before sampling.
                 self.output.submit(frame.rotate(-angle) if angle else frame)
     def submit_samples(self,samples):
@@ -133,12 +142,18 @@ class DisplaySession:
             # Do not open a second handle until the frame worker has closed its handle.
             if self.retiring and not self.retiring.close():raise RuntimeError('USB writer could not stop; nothing erased')
             self.retiring=None
+            from .t113_display import CdcTransport, T113MediaSender, is_t113_media_path, open_t113_serial
             factory=self._transport_factory
-            if factory is None:
-                from .winusb import WinUSB
-                factory=WinUSB
-            transport=factory(path);transport.set_timeout(3000)
-            ResourceSender(transport).upload(blob,progress,lambda:before_erase(path) if before_erase else None)
+            if factory is None and is_t113_media_path(path):
+                transport=CdcTransport(open_t113_serial(path))
+                sender=T113MediaSender(transport)
+            else:
+                if factory is None:
+                    from .winusb import WinUSB
+                    factory=WinUSB
+                transport=factory(path);transport.set_timeout(3000)
+                sender=ResourceSender(transport)
+            sender.upload(blob,progress,lambda:before_erase(path) if before_erase else None)
             self.error=None
             return path
         except Exception as exc:

@@ -4,7 +4,7 @@ These are undocumented service endpoints, not supported public API contracts.
 Fail closed on ambiguous metadata; never request audio or access account cookies.
 """
 import base64,html,json,re,unicodedata,urllib.parse,urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass,field
 
 
 def identify_player(source):
@@ -27,6 +27,7 @@ class Candidate:
     artists: tuple
     album: str
     duration: float
+    cover_url: str = field(default='',compare=False)
 
 
 def same_artists(display, artists):

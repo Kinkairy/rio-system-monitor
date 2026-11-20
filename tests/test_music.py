@@ -1,4 +1,4 @@
-import unittest,tempfile
+import asyncio,unittest,tempfile
 from pathlib import Path
 from unittest.mock import patch,AsyncMock
 from PIL import Image
@@ -25,6 +25,26 @@ class CoverTests(unittest.IsolatedAsyncioTestCase):
    self.assertEqual(await cache.get('one','thumbnail',100),b'first')
    self.assertEqual(await cache.get('two',None,100.5),b'')
    self.assertEqual(await cache.get('two','thumbnail',102.5),b'second')
+
+ async def test_netease_image_does_not_hold_the_song_or_survive_a_switch(self):
+  cache=CoverCache();paused=asyncio.Event()
+  first='https://p3.music.126.net/first.jpg'
+  second='https://p3.music.126.net/second.jpg'
+
+  async def read(url):
+   if url==first:
+    await paused.wait()
+    return b'old image'
+   return b'new image'
+
+  with patch('rio_monitor.music.windows.read_cover',read):
+   self.assertEqual(await cache.get('one',first,100),b'')
+   await asyncio.sleep(0)
+   self.assertEqual(await cache.get('two',second,101),b'')
+   pending=cache.pending
+   await pending
+   paused.set()
+   self.assertEqual(await cache.get('two',second,101.5),b'new image')
 
 class MusicTests(unittest.TestCase):
  def test_long_lyrics_keep_all_words_and_scroll_horizontally_with_original_fonts(self):

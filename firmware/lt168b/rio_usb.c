@@ -66,8 +66,8 @@ const uint8_t *rio_usb_ms_descriptor(uint16_t index,uint16_t *n) {
 void rio_usb_hello(uint8_t p[32]) {
     memcpy(p,"RIO1",4); le16(p+4,1); le16(p+6,32);
     le16(p+8,480); le16(p+10,480); le16(p+12,32); le16(p+14,16);
-    le32(p+16,3); /* RGB565 BE + bounded LZ4/XOR tiles; one frame in flight */
-    le32(p+20,1048); le32(p+24,460800); le32(p+28,rio_usb_crc32(p,28));
+    le32(p+16,7); /* RGB565/LZ4 + adjacent changed tile groups; one frame */
+    le32(p+20,8218); le32(p+24,460800); le32(p+28,rio_usb_crc32(p,28));
 }
 void rio_usb_ack(uint8_t p[24],uint32_t session,uint32_t frame,
                  uint32_t completed,uint16_t status) {

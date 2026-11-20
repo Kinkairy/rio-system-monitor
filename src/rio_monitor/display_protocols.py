@@ -21,6 +21,7 @@ class Capabilities:
     size: tuple | None = None
     interval: float = 1 / 12
     startup_delay: float = 0.0
+    rotation_profile: str | None = None
 
 
 LEGACY = Capabilities('rio-winusb', True, False, True, (480, 480), startup_delay=1.0)
@@ -62,6 +63,9 @@ def rio_frame_interface(path):
 
 
 def capabilities_for(path):
+    from .t113_display import is_t113_path, t113_capabilities
+    if is_t113_path(path):
+        return t113_capabilities(path)
     identity = device_id(path)
     if rio_frame_interface(path):
         from .lt168b_display import BENCH
@@ -227,6 +231,8 @@ class LevetopProtocol:
 def enumerate_paths():
     from .winusb import enumerate_paths as legacy_paths
     paths = list(legacy_paths())
+    from .t113_display import enumerate_t113_paths
+    paths.extend(enumerate_t113_paths())
     try:
         import hid
     except ModuleNotFoundError:
@@ -242,6 +248,9 @@ def enumerate_paths():
 
 
 def create_protocol(path, legacy_transport_factory=None, legacy_sender_factory=None):
+    from .t113_display import T113Protocol, is_t113_path
+    if is_t113_path(path):
+        return T113Protocol(path)
     if rio_frame_interface(path):
         from .lt168b_display import LT168BBenchProtocol
         return LT168BBenchProtocol()

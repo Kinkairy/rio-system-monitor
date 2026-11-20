@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import struct
+from urllib.parse import urlsplit, urlunsplit
 
 from .coreaudio import _installed_client, _PATH
 from .platforms import Candidate, normalized, same_artists
@@ -113,6 +114,22 @@ class PlaybackClock:
         self.pid = self.kernel = self.handle = self.address = None
 
 
+def album_cover_url(album):
+    if not isinstance(album, dict):
+        return ''
+    for url in (album.get('picUrl'), album.get('cover')):
+        if not isinstance(url, str) or len(url) > 2048:
+            continue
+        try:
+            parts = urlsplit(url)
+        except ValueError:
+            continue
+        if (parts.scheme in ('http', 'https') and parts.path
+                and re.fullmatch(r'p[0-9]+\.music\.126\.net', parts.netloc, re.I)):
+            return urlunsplit(('https', parts.netloc, parts.path, 'param=384y384', ''))
+    return ''
+
+
 class PlaybackQueue:
     """Match the visible song with an exact ID in the player's current queue."""
     def __init__(self):
@@ -160,7 +177,8 @@ class PlaybackQueue:
                 continue
             album = item.get('album')
             name = album.get('name') if isinstance(album, dict) else None
-            matches.add(Candidate(ident, title, artists, name if isinstance(name, str) else '', milliseconds / 1000))
+            matches.add(Candidate(ident, title, artists, name if isinstance(name, str) else '',
+                                  milliseconds / 1000, album_cover_url(album)))
         self.key = key
         self.record = matches.pop() if len(matches) == 1 else None
         return self.record

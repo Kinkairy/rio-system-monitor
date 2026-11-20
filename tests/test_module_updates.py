@@ -240,7 +240,7 @@ class UpdateTests(unittest.TestCase):
 class ReleaseToolTests(unittest.TestCase):
     def test_module_release_packs_one_module_at_its_own_version_and_extends_the_published_index(self):
         version = package_modules.module_version(ROOT/'src', 'blackshark')
-        self.assertEqual((version, package_modules.module_version(ROOT/'src', 'fangcun')), ('rc0.1', 'rc0.1'))
+        self.assertEqual((version, package_modules.module_version(ROOT/'src', 'fangcun')), ('rc0.1', 'rc0.4.1'))
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp); runtime = tmp/'runtime'; runtime.mkdir()
             published = tmp/'published.json'

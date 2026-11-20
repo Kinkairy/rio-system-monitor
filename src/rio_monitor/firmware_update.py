@@ -3,6 +3,7 @@ import datetime,hashlib,json,os,sys,threading,time
 from pathlib import Path
 from . import firmware_segments as segments
 from . import firmware_animation, firmware_release
+from .t113_display import WAVESHARE_FIRMWARE, install_firmware, is_t113_update_path, read_firmware_package
 
 PLAN_SHA='a077ac68c9fd06f003ef6b513c038f35c6cc1a8003fcb8c0fa6869b950a2e40a'
 IMAGE_SHA='30780997a3baf2d0002462443c3922f4d54997f1b6e7929c8e80b15a15883a9a'
@@ -114,6 +115,8 @@ class FirmwareUpdate:
         self.watch_stop=threading.Event()
         self.last_stock=None
         self.last_boot=None
+        self.last_waveshare=None
+        self.waveshare_package=self.folder/WAVESHARE_FIRMWARE
         self.segment_package=None
         self.data=dict(state='idle',progress=0.,error='',busy=False,segmented=False)
     def snapshot(self):
@@ -121,7 +124,8 @@ class FirmwareUpdate:
     def update(self,**values):
         with self.lock:self.data.update(values)
     def start_watching(self):
-        if not (self.folder/firmware_release.FILENAME).is_file() or self.watcher is not None:
+        if self.watcher is not None or not any(path.is_file() for path in
+                (self.folder/firmware_release.FILENAME, self.waveshare_package)):
             return
         self.watcher=threading.Thread(target=self._watch,daemon=True,name='RIO-firmware-detect')
         self.watcher.start()
@@ -144,6 +148,9 @@ class FirmwareUpdate:
             output=self.session.output
             generation=self.session.attachment_generation
             if output is not None and not output.error:
+                if is_t113_update_path(output.path):
+                    return bool(output.sent) and self._start_waveshare(output.path, generation)
+                self.last_waveshare=None
                 if output.capabilities.protocol!='levetop-emonitor' or not output.sent:
                     self.last_boot=None
                     return False
@@ -161,6 +168,12 @@ class FirmwareUpdate:
             self.last_boot=None
         else:
             paths=self.session.paths()
+            if len(paths)==1 and is_t113_update_path(paths[0]):
+                if self.session.mode=='stored':
+                    return self._start_waveshare(paths[0], generation)
+                return False  # Wait for the first acknowledged live frame.
+            if not paths:
+                self.last_waveshare=None
             if paths:
                 # A screen being opened by the monitor worker has not completed its handshake yet.
                 if self.session.mode!='stored' or len(paths)!=1 or self.detector()!=paths:
@@ -206,6 +219,61 @@ class FirmwareUpdate:
             self.cancel_event.clear()
             self.thread=threading.Thread(target=self._run,args=(automatic,),daemon=True,name='RIO-firmware-update')
             self.thread.start();return True
+    def _start_waveshare(self, path, generation):
+        token=(generation,path)
+        with self.lock:
+            if self.watch_stop.is_set() or self.data['busy'] or token==self.last_waveshare:
+                return False
+            if not self.waveshare_package.is_file() or self.session.paths()!=[path]:
+                return False
+            self.last_waveshare=token
+            self.data.update(state='checking',progress=0.,error='',busy=True,segmented=False)
+            self.thread=threading.Thread(target=self._run_waveshare,args=(path,generation),daemon=True,
+                                         name='RIO-Waveshare-update')
+            self.thread.start()
+            return True
+
+    def _run_waveshare(self, path, generation):
+        previous=None
+        log=None
+        journal={}
+        try:
+            package=read_firmware_package(self.waveshare_package)
+            with self.session.lock:
+                if (self.session.resource_active or self.session.stop.is_set() or self.session.mode=='firmware'
+                        or generation!=self.session.attachment_generation or self.session.paths()!=[path]):
+                    self.last_waveshare=None
+                    self.update(state='idle')
+                    return
+                for output in (self.session.retiring,self.session.output):
+                    if output and not output.close():
+                        raise RuntimeError('Display writer did not stop / 实时发送未停止')
+                self.session.output=self.session.retiring=None
+                previous=self.session.mode
+                self.session.mode='firmware'
+            self.logs.mkdir(parents=True,exist_ok=True)
+            log=self.logs/('waveshare-'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f')+'.json')
+            journal.update(port=path,trigger='automatic',package_sha256=hashlib.sha256(package[0]).hexdigest())
+            result=install_firmware(path,package,self.session.paths,
+                                    lambda value:self.update(state='writing',progress=value))
+            journal.update(result)
+            if result.get('skipped'):
+                self.update(state='skipped')
+            else:
+                self.update(state='current' if result['already_current'] else 'done',progress=1.)
+        except Exception as exc:
+            journal['error']=str(exc)
+            self.update(state='error',error=str(exc))
+        finally:
+            if log:
+                try:save_journal(log,journal)
+                except OSError:pass
+            if previous is not None:
+                with self.session.lock:
+                    self.session.mode=previous
+                    self.session.retry_at=0
+            self.update(busy=False)
+
     def _run(self,automatic=False):
         port=None;owned=False;path=None;journal=dict(events=[],error=None)
         try:

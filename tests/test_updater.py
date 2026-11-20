@@ -1,7 +1,7 @@
 import hashlib,io,json,os,subprocess,tempfile,threading,time,unittest
 from pathlib import Path
 from unittest.mock import Mock,patch
-from urllib.error import URLError
+from urllib.error import HTTPError,URLError
 from rio_monitor.updater import ASSET_NAME,AutoUpdater,download_asset,latest_asset,launch_install,version_key
 
 
@@ -11,13 +11,32 @@ class UpdateTests(unittest.TestCase):
               digest='sha256:'+hashlib.sha256(content).hexdigest(),
               browser_download_url='https://github.com/Kinkairy/rio-system-monitor/releases/download/rc0.1.2/'+ASSET_NAME)
  def test_public_release_selection_only_returns_a_new_complete_program(self):
-  asset=self.asset();release=dict(tag_name='rc0.1.2',draft=False,prerelease=False,assets=[asset])
+  asset=self.asset()
+  release=dict(tag_name='v0.1.2',id=42,prerelease=False,body='SHA256: '+asset['digest'].split(':')[1]+'\n')
+  attachment=dict(name=ASSET_NAME,size=asset['size'])
+  base='https://gitee.com/api/v5/repos/kinkairy/rio-system-monitor-updates/releases'
   for current,expected in (('rc0.1',True),('rc0.1.1',True),('rc0.1.2',False),('rc0.2',False)):
-   with self.subTest(current=current),patch('urllib.request.urlopen',return_value=io.BytesIO(json.dumps(release).encode())) as request:
-    self.assertEqual(latest_asset(current) is not None,expected)
-    self.assertFalse(request.call_args.args[0].has_header('Authorization'))
-  release['assets'][0]['digest']=None
-  with patch('urllib.request.urlopen',return_value=io.BytesIO(json.dumps(release).encode())):self.assertIsNone(latest_asset('rc0.1'))
+   responses=[io.BytesIO(json.dumps(body).encode()) for body in (release,[attachment])]
+   with self.subTest(current=current),patch('urllib.request.urlopen',side_effect=responses) as request:
+    found=latest_asset(current)
+    self.assertEqual(found is not None,expected)
+    self.assertEqual(request.call_args_list[0].args[0].full_url,base+'/latest')
+    self.assertTrue(all(not call.args[0].has_header('Authorization') for call in request.call_args_list))
+    if found:
+     self.assertEqual(request.call_args.args[0].full_url,base+'/42/attach_files')
+     self.assertEqual(found['digest'],asset['digest'])
+     self.assertEqual(found['size'],asset['size'])
+     self.assertEqual(found['browser_download_url'],'https://gitee.com/kinkairy/rio-system-monitor-updates/releases/download/v0.1.2/'+ASSET_NAME)
+  for invalid in (dict(release,body='No checksum'),dict(release,prerelease=True)):
+   with patch('urllib.request.urlopen',return_value=io.BytesIO(json.dumps(invalid).encode())):
+    self.assertIsNone(latest_asset('rc0.1'))
+  with patch('urllib.request.urlopen',side_effect=[io.BytesIO(json.dumps(release).encode()),io.BytesIO(b'[]')]):
+   self.assertIsNone(latest_asset('rc0.1'))
+ def test_empty_gitee_repository_is_connected_without_a_new_release(self):
+  absent=HTTPError('latest',404,'Not Found',None,None)
+  with patch('urllib.request.urlopen',side_effect=[absent,io.BytesIO(b'[]')]) as request:
+   self.assertIsNone(latest_asset('rc0.1.25'))
+   self.assertTrue(request.call_args.args[0].full_url.endswith('/releases?per_page=1'))
  def test_download_stages_only_complete_updates_and_preserves_running_file_on_failure(self):
   with tempfile.TemporaryDirectory() as tmp:
    root=Path(tmp);target=root/'RIO.exe';target.write_bytes(b'old program')

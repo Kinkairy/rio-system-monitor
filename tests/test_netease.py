@@ -97,11 +97,13 @@ def test_queue_requires_unique_current_recording_and_updates(monkeypatch, tmp_pa
     path = tmp_path / 'NetEase' / 'CloudMusic' / 'webdata' / 'file' / 'playingList'
     path.parent.mkdir(parents=True)
     item = {'track': {'id': '40', 'name': 'A', 'duration': 200_500,
-                       'artists': [{'name': 'M'}, {'name': 'N'}], 'album': {'name': '盤'}}}
+                       'artists': [{'name': 'M'}, {'name': 'N'}],
+                       'album': {'name': '盤','picUrl':'http://p4.music.126.net/same.jpg'}}}
     queue = PlaybackQueue()
     path.write_text(json.dumps({'list': [item, item]}), encoding='utf-8')
     expected = Candidate('40', 'A', ('M', 'N'), '盤', 200.5)
     assert queue.find('A', 'M/N') == expected
+    assert queue.find('A', 'M/N').cover_url == 'https://p4.music.126.net/same.jpg?param=384y384'
     assert queue.find('A', 'M / N') == expected
     assert queue.find('A', 'M') is None
     other = {'track': dict(item['track'], id='500')}
@@ -162,3 +164,104 @@ def test_hidden_tray_player_uses_only_the_verified_main_window(monkeypatch):
     monkeypatch.setattr(netease.c, 'WINFUNCTYPE', lambda *args: lambda fn: fn, raising=False)
 
     assert netease._windows({101}) == [(101, 'Song - Artist'), (101, 'Visible - Artist')]
+
+
+def test_album_art_accepts_only_the_netease_image_host():
+    from rio_monitor.music.netease_timing import album_cover_url
+
+    assert not album_cover_url({'picUrl': 'https://example.com/cover.jpg'})
+    assert not album_cover_url({'picUrl': 'https://p1.music.126.net@example.com/cover.jpg'})
+    assert album_cover_url({'cover': 'http://p3.music.126.net/cover.jpg'}) == (
+        'https://p3.music.126.net/cover.jpg?param=384y384'
+    )
+
+
+def test_native_netease_poll_keeps_or_recovers_the_selected_song(monkeypatch):
+    import asyncio
+    import datetime
+    import sys
+    from types import SimpleNamespace
+
+    from rio_monitor.music.windows import MediaSessions
+
+    profiles = (
+        # A complete media session takes priority over the desktop adapter.
+        (190, 44, 'Album', 44, 190, False),
+        # The published position is valid even when the end timestamp is zero.
+        (0, 58, 'Album', 58, 200, False),
+        # Blank timing is recovered from the verified clock for the same song.
+        (0, 0, 'Album', 30, 200, True),
+        (0, 0, 'Album', 75, 200, True),
+        # A different edition must not inherit the desktop playback clock.
+        (0, 0, 'Other album', None, 0, False),
+    )
+    index = 0
+    calls = []
+    published = []
+
+    async def properties():
+        return SimpleNamespace(title='A', artist='B', album_title=profiles[index][2], thumbnail=None)
+
+    def timeline():
+        end, position, *_ = profiles[index]
+        return SimpleNamespace(
+            start_time=datetime.timedelta(0), end_time=datetime.timedelta(seconds=end),
+            position=datetime.timedelta(seconds=position),
+            last_updated_time=datetime.datetime(2000, 1, 1, tzinfo=datetime.timezone.utc),
+        )
+
+    session = SimpleNamespace(
+        source_app_user_model_id='cloudmusic.exe', try_get_media_properties_async=properties,
+        get_timeline_properties=timeline,
+        get_playback_info=lambda: SimpleNamespace(playback_status=5 if index == 3 else 4),
+    )
+
+    async def request():
+        return SimpleNamespace(get_sessions=lambda: [session])
+
+    monkeypatch.setitem(sys.modules, 'winrt.windows.media.control', SimpleNamespace(
+        GlobalSystemMediaTransportControlsSessionManager=SimpleNamespace(request_async=request),
+    ))
+
+    def publish(track, sources, status):
+        nonlocal index
+        published.append((track, sources, status))
+        index += 1
+        if index == len(profiles):
+            provider.stop.set()
+
+    provider = MediaSessions(publish, lambda: '')
+    provider.netease.queue.find = lambda title, artist: Candidate('40', 'A', ('B',), 'Album', 200)
+
+    def sample():
+        import time
+        calls.append(index)
+        return Track(source=SOURCE, title='A', artist='B', album='Album', duration=200,
+                     position=profiles[index][3], observed=time.monotonic(),
+                     recording_id='40', sampled_position=True)
+
+    provider.netease.observe = sample
+    asyncio.run(provider.poll())
+
+    assert calls == [2, 3]
+    for profile, (track, sources, status) in zip(profiles, published, strict=True):
+        _, _, album, position, duration, sampled = profile
+        assert status == 'ready'
+        assert sources == [{'id': 'cloudmusic.exe', 'label': 'cloudmusic.exe'}]
+        assert track.key == ('cloudmusic.exe', 'A', 'B', album)
+        assert (track.position, track.duration, track.sampled_position) == (position, duration, sampled)
+    assert published[3][0].position_at(published[3][0].observed + 1) == 75
+
+
+def test_native_timeline_does_not_use_unavailable_or_mismatched_clock(monkeypatch):
+    playback = netease.NetEasePlayback()
+    track = Track(source='cloudmusic.exe', title='A', artist='B', playing=True)
+    record = Candidate('40', 'A', ('B',), 'Album', 200)
+    monkeypatch.setattr(playback.queue, 'find', lambda title, artist: record)
+    monkeypatch.setattr(playback, 'observe', lambda: Track(
+        source=SOURCE, title='Different song', artist='B', duration=200,
+        position=72, recording_id='99', sampled_position=True,
+    ))
+    assert playback.fill_native_timeline(track).position is None
+    monkeypatch.setattr(playback, 'observe', lambda: None)
+    assert playback.fill_native_timeline(track).position is None

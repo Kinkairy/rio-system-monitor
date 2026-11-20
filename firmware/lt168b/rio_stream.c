@@ -14,13 +14,13 @@ static uint16_t le16(const uint8_t *p) {
  * as well as the normal tail restrictions: a format-only parser is stricter
  * than this decoder. Offset0 is retained for decoder compatibility; the actual
  * unchanged decoder still defines every output byte at presentation.
- * Input is bounded to1023 bytes by the packet layer; integer lengths cannot
+ * Input is bounded to8192 bytes by the packet layer; integer lengths cannot
  * overflow here. Never use this path when the current tile cannot be staged. */
-static int valid_lz4_tile(const uint8_t *p,unsigned n) {
+static int valid_lz4_tile(const uint8_t *p,unsigned n,unsigned limit) {
     unsigned in=0,out=0;
     while(in<n) {
         unsigned token=p[in++],length=token>>4,offset,extra;
-        if(length!=15 && in+16<n && out<=1024-32) {
+        if(length!=15 && in+16<n && out<=limit-32) {
             in+=length;out+=length;
             offset=le16(p+in);in+=2;
             length=token&15u;
@@ -35,9 +35,9 @@ static int valid_lz4_tile(const uint8_t *p,unsigned n) {
                     if(in+15>n)return 0;
                 } while(extra==255);
             }
-            if(length>n-in || length>1024-out)return 0;
+            if(length>n-in || length>limit-out)return 0;
             in+=length;out+=length;
-            if(out>1024-12 || in+8>n)return in==n && out==1024;
+            if(out>limit-12 || in+8>n)return in==n && out==limit;
             offset=le16(p+in);in+=2;
             length=token&15u;
         }
@@ -48,7 +48,7 @@ static int valid_lz4_tile(const uint8_t *p,unsigned n) {
                 if(in+4>n)return 0;
             } while(extra==255);
         }
-        if(offset>out || length+4>1024-5-out)return 0;
+        if(offset>out || length+4>limit-5-out)return 0;
         out+=length+4;
     }
     return 0;
@@ -99,7 +99,7 @@ static uint32_t pixel_pair(const uint8_t *q) {
     return v;
 }
 static void resolve_tile(uint16_t *dst,unsigned stride,const uint16_t *base,
-                         const uint8_t *q,unsigned predict) {
+                         const uint8_t *q,unsigned predict,unsigned width) {
     unsigned j,k;
     /* CCore expands even four-byte memcpy to byte/stack traffic unless the
      * alignment is known. may_alias preserves C alias rules for pixel pairs. */
@@ -109,18 +109,18 @@ static void resolve_tile(uint16_t *dst,unsigned stride,const uint16_t *base,
         const pixel_word *in=(const pixel_word *)(const void *)q;
         const pixel_word *old=(const pixel_word *)(const void *)base;
         for(j=0;j<16;++j) {
-            for(k=0;k<16;++k) {
+            for(k=0;k<width/2;++k) {
                 uint32_t v=in[k];
 #if !defined(__BYTE_ORDER__) || __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
                 v=((v&0x00ff00ffu)<<8)|((v>>8)&0x00ff00ffu);
 #endif
                 out[k]=predict ? v^old[k] : v;
             }
-            in+=16;out+=stride/2;old+=240;
+            in+=width/2;out+=stride/2;old+=240;
         }
         return;
     }
-    for(j=0;j<16;++j) for(k=0;k<32;k+=2) {
+    for(j=0;j<16;++j) for(k=0;k<width;k+=2) {
         uint32_t v=pixel_pair(q),old;
         q+=4;
         if(predict){memcpy(&old,base+j*480u+k,4);v^=old;}
@@ -139,23 +139,25 @@ static int present(rio_stream *s) {
         for(i=0;i<15;++i) if(s->seen[(first+i)/8] & (1u<<((first+i)%8)))mask|=1u<<i;
         if (!mask) continue;
         for(i=0;i<15;++i) if(mask&(1u<<i)) {
-            unsigned tile=first+i,x=i*32,predict=0;
+            unsigned tile=first+i,x=i*32,predict=0,columns=1;
             const uint8_t *p=s->staging+s->offsets[tile],*q=p+2;
             unsigned tag=le16(p),length=tag&0x3fffu;
-            if(tag&0x4000u) {
+            if((tag&0xc000u)==0xc000u) {
                 for(j=0;j<16;++j)memcpy(s->row+j*480u+x,p+4+j*64u,64);
                 continue;
             }
+            if(tag&0x4000u){columns=*q++;--length;}
             if (!(tag&0x8000u)) {
                 predict=q[0];
                 PROFILE_START(decode_time);
                 int result=LZ4_decompress_safe((const char *)q+1,(char *)s->decoded,
-                                       (int)length-1,1024);
+                                       (int)length-1,(int)columns*1024);
                 PROFILE_END(2,decode_time);PROFILE_COUNT(8);
-                if(result!=1024)return -1;
+                if(result!=(int)columns*1024)return -1;
                 q=s->decoded;
             }
-            resolve_tile(s->row+x,480,s->pixels+band*7680u+x,q,predict);
+            resolve_tile(s->row+x,480,s->pixels+band*7680u+x,q,predict,columns*32u);
+            i+=columns-1;
         }
         PROFILE_END(3,prepare_time);
         PROFILE_START(copy_time);
@@ -206,22 +208,31 @@ static int apply(rio_stream *s) {
         return 0;
     }
     if (!s->active || session!=s->session || frame!=s->frame) return reject(s);
-    if (kind==3 || kind==5) {
-        unsigned x,y,j,k,predict=0; const uint8_t *q=p+24;
-        if (index>=RIO_TILE_COUNT || s->received>=s->expected ||
-            (s->seen[index/8] & (1u<<(index%8)))) return reject(s);
+    if (kind==3 || kind==5 || kind==6) {
+        unsigned x,y,j,k,predict=0,columns=1,bytes=length; const uint8_t *q=p+24;
+        if(kind==6) {
+            if(length<3 || !s->staging_active || s->stage_native ||
+               (size_t)length+2>s->capacity-s->staged)return reject(s);
+            columns=*q++;--bytes;
+            if(columns<2 || columns>8 || index%15u+columns>15u)return reject(s);
+        }
+        if (index>=RIO_TILE_COUNT || columns>(unsigned)(s->expected-s->received))return reject(s);
+        for(j=0;j<columns;++j) {
+            unsigned at=index+j;
+            if(s->seen[at/8] & (1u<<(at%8)))return reject(s);
+        }
         if (kind==3) {
             if (length!=1024) return reject(s);
         } else {
-            if (length<2 || q[0]>1 || (q[0] && !s->delta)) return reject(s);
+            if (bytes<2 || q[0]>1 || (q[0] && !s->delta)) return reject(s);
             predict=q[0];
             if(s->staging_active && !s->stage_native &&
                (size_t)length+2<=s->capacity-s->staged) {
-                if(!valid_lz4_tile(q+1,length-1))return reject(s);
+                if(!valid_lz4_tile(q+1,bytes-1,columns*1024u))return reject(s);
             } else {
                 PROFILE_START(decode_time);
                 int result=LZ4_decompress_safe((const char *)q+1,(char *)s->decoded,
-                                             (int)length-1,1024);
+                                             (int)length-1,(int)columns*1024);
                 PROFILE_END(1,decode_time);PROFILE_COUNT(7);
                 if(result!=1024)return reject(s);
                 q=s->decoded;
@@ -234,7 +245,7 @@ static int apply(rio_stream *s) {
             if(kind==5) {
                 PROFILE_START(decode_time);
                 int result=LZ4_decompress_safe((const char *)p+25,
-                         (char *)s->decoded,(int)length-1,1024);
+                         (char *)s->decoded,(int)bytes-1,1024);
                 PROFILE_END(1,decode_time);PROFILE_COUNT(7);
                 if(result!=1024)return reject(s);
             }
@@ -246,10 +257,10 @@ static int apply(rio_stream *s) {
              * byte conversion or XOR is needed during presentation. */
             at[0]=0;at[1]=0xc4;at[2]=at[3]=0;
             resolve_tile((uint16_t *)(void *)(at+4),32,
-                         s->pixels+(index/15u)*7680u+(index%15u)*32u,q,predict);
+                         s->pixels+(index/15u)*7680u+(index%15u)*32u,q,predict,32);
             s->staged+=1028u;
         } else if (s->staging_active) {
-            unsigned tag=length|(kind==3 ? 0x8000u : 0);
+            unsigned tag=length|(kind==3 ? 0x8000u : kind==6 ? 0x4000u : 0);
             uint8_t *at=s->staging+s->staged;
             s->offsets[index]=(uint32_t)s->staged;
             at[0]=(uint8_t)tag;at[1]=(uint8_t)(tag>>8);
@@ -262,7 +273,8 @@ static int apply(rio_stream *s) {
                 s->pixels[at]=predict ? (uint16_t)(s->pixels[at]^value) : value; q+=2;
             }
         }
-        s->seen[index/8] |= (uint8_t)(1u<<(index%8)); ++s->received;
+        for(j=0;j<columns;++j){unsigned at=index+j;s->seen[at/8]|=(uint8_t)(1u<<(at%8));}
+        s->received+=(uint16_t)columns;
         return 0;
     }
     if (kind==4) {
@@ -286,7 +298,7 @@ int rio_stream_feed(rio_stream *s, const uint8_t *data, size_t length) {
         if (s->used!=s->need) continue;
         if (s->need==24) {
             uint16_t payload=le16(s->packet+6);
-            if (memcmp(s->packet,"RIO1",4) || s->packet[4]!=1 || payload>1024) return reject(s);
+            if (memcmp(s->packet,"RIO1",4) || s->packet[4]!=1 || payload>(s->packet[5]==6 ? 8194 : 1024)) return reject(s);
             s->need=(uint16_t)(24+payload);
             if (payload) continue;
         }

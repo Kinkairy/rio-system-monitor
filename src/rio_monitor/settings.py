@@ -45,6 +45,7 @@ def load():
         if s.music_lyrics_consent != 2:s.music_online_lyrics=False  # Preserve older provider opt-outs.
         s.start_hidden=True
         s.display_mode='monitor'  # Each program launch reconnects the live display.
+    except FileNotFoundError:raw={};s=Settings(music_enabled=True)
     except (OSError,ValueError,TypeError):raw={};s=Settings()
     # Older releases resumed BlackShark whenever its saved configuration existed.
     if 'blackshark_enabled' not in raw:s.blackshark_enabled=config_path().with_name('blackshark.json').is_file()

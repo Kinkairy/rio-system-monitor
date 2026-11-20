@@ -1,11 +1,12 @@
 """NetEase desktop fallback when its Windows media session is unavailable."""
 import ctypes as c
+from dataclasses import replace
 import math
 import sys
 import time
 
 from .netease_timing import PlaybackClock, PlaybackQueue
-from .platforms import identify_player
+from .platforms import identify_player, normalized
 from .state import Track
 
 SOURCE = 'netease-window-audio'
@@ -102,6 +103,31 @@ class NetEasePlayback:
         self.identity = self.record = self.previous = None
         self.record_due = 0
 
+    def fill_native_timeline(self, track):
+        if track.duration > 0 and track.position is not None:
+            self.close()
+            return track
+
+        record = self.queue.find(track.title, track.artist) if track.title and track.artist else None
+        if (record is None or (track.album and normalized(track.album) != normalized(record.album))
+                or (track.duration > 0 and abs(track.duration - record.duration) > 3)):
+            self.close()
+            return replace(track, position=None)
+
+        if track.position is not None and track.position <= record.duration + .5:
+            self.close()
+            return replace(track, duration=record.duration, position=min(track.position, record.duration))
+
+        try:
+            sampled = self.observe()
+        except Exception:
+            self.close()
+            sampled = None
+        if sampled is not None and sampled.recording_id == record.ident and sampled.position is not None:
+            return replace(track, duration=record.duration, position=sampled.position,
+                           observed=sampled.observed, sampled_position=True)
+        return replace(track, position=None)
+
     def observe(self, timing=True):
         from .coreaudio import active_cloudmusic_pids
         audible = active_cloudmusic_pids()
@@ -123,16 +149,15 @@ class NetEasePlayback:
             self.identity = identity
             self.record = self.previous = None
             self.record_due = 0
-        position = self.clock.read(pid)
-        if position is None or not math.isfinite(position):
-            self.previous = None
-            return legacy
-
         if now >= self.record_due:
             self.record_due = now + 1
             self.record = self.queue.find(title, artist)
         record = self.record
-        if record is None or not 0 <= position <= record.duration + .5:
+        if legacy is not None and record is not None:
+            legacy = replace(legacy, cover_url=record.cover_url)
+        position = self.clock.read(pid)
+        if (position is None or not math.isfinite(position) or record is None
+                or not 0 <= position <= record.duration + .5):
             self.previous = None
             return legacy
 
@@ -147,4 +172,4 @@ class NetEasePlayback:
         return Track(source=SOURCE, title=title, artist=artist, album=record.album,
                      duration=record.duration, position=min(position, record.duration),
                      playing=playing, observed=now, recording_id=record.ident,
-                     sampled_position=True)
+                     sampled_position=True, cover_url=record.cover_url)

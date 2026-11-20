@@ -4,7 +4,7 @@
 
 ## 当前版本与目录
 
-当前主程序版本为 **rc0.1.24**。温度平滑构建发布在 [v0.1.24](https://github.com/Kinkairy/rio-system-monitor/releases/tag/v0.1.24)。低于 0.1.24 的版本可在 RIO 设置底部点击「Check updates」并按提示更新。旧的 rc0.1.24 构建可从发布页下载对应的 EXE。
+当前主程序版本为 **rc0.1.25**。本次安装包在 [GitHub Releases](https://github.com/Kinkairy/rio-system-monitor/releases/tag/v0.1.25) 发布。旧版可在 RIO 设置底部检查更新并升级到本版。后续主程序更新由 [Gitee](https://gitee.com/kinkairy/rio-system-monitor-updates) 提供，扩展模块由 GitHub 提供。
 
 网易云音乐的 Windows 桌面版收进托盘后也可继续在 RIO 预览中显示歌曲和同步歌词。该补充识别在网易云 **3.1.43.205627 x64** 上验证。详见[音乐模式](docs/music-mode.md#netease-desktop-tray-playback-rc0124)。
 
@@ -74,7 +74,7 @@ CPU 温度继续优先读取 Intel 封装或 AMD 芯片传感器。温度数字�
 
 ## 自动更新（AUTOUPDATE-20261023）
 
-当前行为（`ROUND-SCREEN-UPDATE-PROMPT-20261030` 起）：正式 EXE 在启动后 10 秒和之后每 6 小时检查一次 GitHub Release，点底部「Check updates」立即检查。发现新版只在底部显示「发现新版本 <版本>」，链接变成「Update to <版本>」；点击后才下载并核对 SHA-256，下完在写屏、温度组件和风神写入都空闲时重启安装。模块的提示见「模块单独更新」。以下为历次记录。
+当前行为（`ROUND-SCREEN-UPDATE-PROMPT-20261030` 起）：正式 EXE 在启动后 10 秒和之后每 6 小时检查主程序发行版，点底部「Check updates」立即检查。发现新版只在底部显示「发现新版本 <版本>」，链接变成「Update to <版本>」；点击后才下载并核对 SHA-256，下完在写屏、温度组件和风神写入都空闲时重启安装。模块的提示见「模块单独更新」。以下为历次记录。
 
 ### 托盘提示去除版本号（TOOLTIP-20261023，2026-10-23）
 

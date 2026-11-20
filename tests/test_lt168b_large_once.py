@@ -7,7 +7,7 @@ from rio_monitor.lt168b_stream import packet
 
 WRAPPER=r"""
 #include "rio_stream.c"
-int validate_tile(const uint8_t *p,unsigned n) {return valid_lz4_tile(p,n);}
+int validate_tile(const uint8_t *p,unsigned n) {return valid_lz4_tile(p,n,1024);}
 """
 def boundary_blocks():
     # Reference accepts zero offset and a shortcut ending with a zero-literal
