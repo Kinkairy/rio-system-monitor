@@ -1,6 +1,16 @@
 # RIO System Monitor recovery
 
-The desktop application reports `rc0.1.24`. To restore the host, exit RIO, replace its executable with the matching distribution, and restart. Keep the existing `%LOCALAPPDATA%/RIO-Monitor` directory to retain settings and local data.
+## Current desktop recovery baseline
+
+To restore rc0.1.25, exit RIO and replace the executable with the release's
+`RIO-System-Monitor.exe`. Verify that it is 76,598,754 bytes and has SHA-256
+`5b198a39ac8b53c1f76acad089a8a9e9f8f66d3e57d0d74559a882c42dd66165`. Start RIO again and keep
+`%LOCALAPPDATA%/RIO-Monitor` to retain settings and local data. Download the
+EXE from [GitHub Releases](https://github.com/Kinkairy/rio-system-monitor/releases/tag/v0.1.25).
+
+The exact source revision is `da08277bbad7912ea88213888268fab4924447b6` under
+the `v0.1.25` tag. Later main program updates use [Gitee](https://gitee.com/kinkairy/rio-system-monitor-updates).
+Extension modules use GitHub.
 
 The host negotiates the display protocol when a compatible USB screen connects. The program detects a supported factory eM133-V3 and prompts for the physical actions required to enter its upgrade mode. The released updater verifies the device and package, backs up and checks the 588 KiB protected area, verifies the animation data by readback, and activates the player. Updating the desktop program on a working screen requires no device write.
 
