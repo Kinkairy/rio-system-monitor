@@ -4,7 +4,7 @@ RIO System Monitor 在 Windows 上采集 CPU、GPU、内存、温度与网络状
 
 ## 下载与更新
 
-当前公开 Windows 主程序为 **rc0.1.27**。[下载 rc0.1.27](https://github.com/Kinkairy/rio-system-monitor/releases/tag/v0.1.27) · [历史版本](https://github.com/Kinkairy/rio-system-monitor/releases)。Windows 主程序从 [Gitee 发行页](https://gitee.com/kinkairy/rio-system-monitor-updates/releases/tag/v0.1.27) 提供在线更新。在支持该更新源的旧版中，可从 RIO 设置底部选择「Check updates」；也可从 GitHub 手动下载。
+[下载最新 Windows 版](https://github.com/Kinkairy/rio-system-monitor/releases/latest) · [GitHub 历史版本](https://github.com/Kinkairy/rio-system-monitor/releases) · [Gitee 发行页](https://gitee.com/kinkairy/rio-system-monitor-updates/releases)。Windows 主程序通过 Gitee 提供在线更新。支持该更新源的旧版可在 RIO 设置底部点击「Check updates」，也可手动下载最新版。
 
 方寸山与风神 Pro 可在「设置 → 扩展」启用。RIO 按模块清单下载并校验对应安装包。[扩展模块发行页](https://github.com/Kinkairy/rio-system-monitor/releases/tag/modules) · [模块更新清单](https://github.com/Kinkairy/rio-system-monitor/releases/download/modules/RIO-Modules.json) · [主程序更新服务](https://gitee.com/kinkairy/rio-system-monitor-updates)
 
